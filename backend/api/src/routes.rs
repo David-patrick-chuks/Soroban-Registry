@@ -5,7 +5,6 @@ use axum::{
 
 use crate::{handlers, state::AppState};
 
-/// Contract-related routes
 pub fn contract_routes() -> Router<AppState> {
     Router::new()
         .route("/api/contracts", get(handlers::list_contracts))
@@ -16,6 +15,11 @@ pub fn contract_routes() -> Router<AppState> {
             get(handlers::get_contract_versions),
         )
         .route("/api/contracts/verify", post(handlers::verify_contract))
+        .route("/api/contracts/:id/deployments/status", get(handlers::get_deployment_status))
+        .route("/api/deployments/green", post(handlers::deploy_green))
+        .route("/api/deployments/switch", post(handlers::switch_deployment))
+        .route("/api/deployments/:contract_id/rollback", post(handlers::rollback_deployment))
+        .route("/api/deployments/health", post(handlers::report_health_check))
 }
 
 /// Publisher-related routes

@@ -178,9 +178,63 @@ pub struct CreateMigrationRequest {
     pub wasm_hash: String,
 }
 
-/// Request to update migration status
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "deployment_environment", rename_all = "lowercase")]
+pub enum DeploymentEnvironment {
+    Blue,
+    Green,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "deployment_status", rename_all = "lowercase")]
+pub enum DeploymentStatus {
+    Active,
+    Inactive,
+    Testing,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ContractDeployment {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub environment: DeploymentEnvironment,
+    pub status: DeploymentStatus,
+    pub wasm_hash: String,
+    pub deployed_at: DateTime<Utc>,
+    pub activated_at: Option<DateTime<Utc>>,
+    pub health_checks_passed: i32,
+    pub health_checks_failed: i32,
+    pub last_health_check_at: Option<DateTime<Utc>>,
+    pub error_message: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeploymentSwitch {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub from_environment: DeploymentEnvironment,
+    pub to_environment: DeploymentEnvironment,
+    pub switched_at: DateTime<Utc>,
+    pub switched_by: Option<String>,
+    pub rollback: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateMigrationStatusRequest {
-    pub status: MigrationStatus,
-    pub log_output: Option<String>,
+pub struct DeployGreenRequest {
+    pub contract_id: String,
+    pub wasm_hash: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwitchDeploymentRequest {
+    pub contract_id: String,
+    pub force: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HealthCheckRequest {
+    pub contract_id: String,
+    pub environment: DeploymentEnvironment,
+    pub passed: bool,
 }

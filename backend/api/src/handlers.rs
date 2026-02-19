@@ -10,8 +10,9 @@ use axum::{
     Json,
 };
 use shared::{
-    Contract, ContractSearchParams, ContractVersion, PaginatedResponse, PublishRequest, Publisher,
-    VerifyRequest,
+    Contract, ContractDeployment, ContractSearchParams, ContractVersion, DeployGreenRequest,
+    DeploymentEnvironment, DeploymentStatus, DeploymentSwitch, HealthCheckRequest,
+    PaginatedResponse, PublishRequest, Publisher, SwitchDeploymentRequest, VerifyRequest,
 };
 use uuid::Uuid;
 
@@ -199,7 +200,6 @@ pub async fn list_contracts(
     )))
 }
 
-/// Get a specific contract by ID
 pub async fn get_contract(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
@@ -216,7 +216,22 @@ pub async fn get_contract(
             _ => db_internal_error("get contract by id", err),
         })?;
 
+    let active_deployment: Option<ContractDeployment> = sqlx::query_as(
+        "SELECT * FROM contract_deployments 
+         WHERE contract_id = $1 AND status = 'active'",
+    )
+    .bind(contract.id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get active deployment", err))?;
+
+    if let Some(deployment) = active_deployment {
+        let mut contract_with_deployment = contract.clone();
+        contract_with_deployment.wasm_hash = deployment.wasm_hash;
+        Ok(Json(contract_with_deployment))
+    } else {
     Ok(Json(contract))
+    }
 }
 
 /// Get contract version history
@@ -263,7 +278,6 @@ pub async fn publish_contract(
     // TODO: Fetch WASM hash from Stellar network
     let wasm_hash = "placeholder_hash".to_string();
 
-    // Insert contract
     let contract: Contract = sqlx::query_as(
         "INSERT INTO contracts (contract_id, wasm_hash, name, description, publisher_id, network, category, tags)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -280,6 +294,17 @@ pub async fn publish_contract(
     .fetch_one(&state.db)
     .await
     .map_err(|err| db_internal_error("create contract", err))?;
+
+    sqlx::query(
+        "INSERT INTO contract_deployments (contract_id, environment, status, wasm_hash, activated_at)
+         VALUES ($1, 'blue', 'active', $2, NOW())
+         ON CONFLICT (contract_id, environment) DO NOTHING",
+    )
+    .bind(contract.id)
+    .bind(&wasm_hash)
+    .execute(&state.db)
+    .await
+    .map_err(|err| db_internal_error("create initial blue deployment", err))?;
 
     Ok(Json(contract))
 }
@@ -357,7 +382,349 @@ pub async fn get_publisher_contracts(
     Ok(Json(contracts))
 }
 
-/// Fallback endpoint for unknown routes
+pub async fn deploy_green(
+    State(state): State<AppState>,
+    payload: Result<Json<DeployGreenRequest>, JsonRejection>,
+) -> ApiResult<Json<ContractDeployment>> {
+    let Json(req) = payload.map_err(map_json_rejection)?;
+
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
+        .bind(&req.contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "ContractNotFound",
+                format!("Contract not found: {}", req.contract_id),
+            ),
+            _ => db_internal_error("get contract for deployment", err),
+        })?;
+
+    let deployment: ContractDeployment = sqlx::query_as(
+        "INSERT INTO contract_deployments (contract_id, environment, status, wasm_hash)
+         VALUES ($1, 'green', 'testing', $2)
+         ON CONFLICT (contract_id, environment) 
+         DO UPDATE SET wasm_hash = EXCLUDED.wasm_hash, status = 'testing', 
+                       deployed_at = NOW(), error_message = NULL
+         RETURNING *",
+    )
+    .bind(contract.id)
+    .bind(&req.wasm_hash)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|err| db_internal_error("deploy green", err))?;
+
+    Ok(Json(deployment))
+}
+
+pub async fn switch_deployment(
+    State(state): State<AppState>,
+    payload: Result<Json<SwitchDeploymentRequest>, JsonRejection>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let Json(req) = payload.map_err(map_json_rejection)?;
+    let force = req.force.unwrap_or(false);
+
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
+        .bind(&req.contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "ContractNotFound",
+                format!("Contract not found: {}", req.contract_id),
+            ),
+            _ => db_internal_error("get contract for switch", err),
+        })?;
+
+    let mut tx = state.db.begin().await.map_err(|err| {
+        db_internal_error("begin transaction for switch", err)
+    })?;
+
+    let active_deployment: Option<ContractDeployment> = sqlx::query_as(
+        "SELECT * FROM contract_deployments 
+         WHERE contract_id = $1 AND status = 'active'",
+    )
+    .bind(contract.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("get active deployment", err))?;
+
+    let from_env = active_deployment
+        .as_ref()
+        .map(|d| d.environment.clone())
+        .unwrap_or(DeploymentEnvironment::Blue);
+
+    let to_env = match from_env {
+        DeploymentEnvironment::Blue => DeploymentEnvironment::Green,
+        DeploymentEnvironment::Green => DeploymentEnvironment::Blue,
+    };
+
+    let green_deployment: Option<ContractDeployment> = sqlx::query_as(
+        "SELECT * FROM contract_deployments 
+         WHERE contract_id = $1 AND environment = 'green'",
+    )
+    .bind(contract.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("get green deployment", err))?;
+
+    if let Some(ref green) = green_deployment {
+        if !force && green.status != DeploymentStatus::Testing {
+            return Err(ApiError::bad_request(
+                "InvalidDeploymentStatus",
+                "Green deployment must be in testing status before switch",
+            ));
+        }
+        if !force && green.health_checks_passed < 3 {
+            return Err(ApiError::bad_request(
+                "InsufficientHealthChecks",
+                "Green deployment must pass at least 3 health checks before switch",
+            ));
+        }
+    } else {
+        return Err(ApiError::bad_request(
+            "NoGreenDeployment",
+            "No green deployment found",
+        ));
+    }
+
+    if let Some(ref active) = active_deployment {
+        sqlx::query("UPDATE contract_deployments SET status = 'inactive' WHERE id = $1")
+            .bind(active.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| db_internal_error("deactivate current deployment", err))?;
+    }
+
+    sqlx::query(
+        "UPDATE contract_deployments 
+         SET status = 'active', activated_at = NOW() 
+         WHERE contract_id = $1 AND environment = $2",
+    )
+    .bind(contract.id)
+    .bind(&to_env)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("activate new deployment", err))?;
+
+    sqlx::query_as::<_, DeploymentSwitch>(
+        "INSERT INTO deployment_switches (contract_id, from_environment, to_environment)
+         VALUES ($1, $2, $3)
+         RETURNING *",
+    )
+    .bind(contract.id)
+    .bind(&from_env)
+    .bind(&to_env)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("record deployment switch", err))?;
+
+    tx.commit().await.map_err(|err| {
+        db_internal_error("commit deployment switch", err)
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "switched_from": from_env,
+        "switched_to": to_env,
+        "contract_id": req.contract_id
+    })))
+}
+
+pub async fn rollback_deployment(
+    State(state): State<AppState>,
+    Path(contract_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
+        .bind(&contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "ContractNotFound",
+                format!("Contract not found: {}", contract_id),
+            ),
+            _ => db_internal_error("get contract for rollback", err),
+        })?;
+
+    let mut tx = state.db.begin().await.map_err(|err| {
+        db_internal_error("begin transaction for rollback", err)
+    })?;
+
+    let active_deployment: Option<ContractDeployment> = sqlx::query_as(
+        "SELECT * FROM contract_deployments 
+         WHERE contract_id = $1 AND status = 'active'",
+    )
+    .bind(contract.id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("get active deployment", err))?;
+
+    let from_env = active_deployment
+        .as_ref()
+        .map(|d| d.environment.clone())
+        .unwrap_or(DeploymentEnvironment::Green);
+
+    let to_env = match from_env {
+        DeploymentEnvironment::Blue => DeploymentEnvironment::Green,
+        DeploymentEnvironment::Green => DeploymentEnvironment::Blue,
+    };
+
+    let target_deployment: Option<ContractDeployment> = sqlx::query_as(
+        "SELECT * FROM contract_deployments 
+         WHERE contract_id = $1 AND environment = $2",
+    )
+    .bind(contract.id)
+    .bind(&to_env)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("get target deployment", err))?;
+
+    if target_deployment.is_none() {
+        return Err(ApiError::bad_request(
+            "NoDeploymentToRollback",
+            format!("No {} deployment found to rollback to", to_env),
+        ));
+    }
+
+    if let Some(ref active) = active_deployment {
+        sqlx::query("UPDATE contract_deployments SET status = 'inactive' WHERE id = $1")
+            .bind(active.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|err| db_internal_error("deactivate current deployment", err))?;
+    }
+
+    sqlx::query(
+        "UPDATE contract_deployments 
+         SET status = 'active', activated_at = NOW() 
+         WHERE contract_id = $1 AND environment = $2",
+    )
+    .bind(contract.id)
+    .bind(&to_env)
+    .execute(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("activate rollback deployment", err))?;
+
+    sqlx::query_as::<_, DeploymentSwitch>(
+        "INSERT INTO deployment_switches (contract_id, from_environment, to_environment, rollback)
+         VALUES ($1, $2, $3, true)
+         RETURNING *",
+    )
+    .bind(contract.id)
+    .bind(&from_env)
+    .bind(&to_env)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|err| db_internal_error("record rollback switch", err))?;
+
+    tx.commit().await.map_err(|err| {
+        db_internal_error("commit rollback", err)
+    })?;
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "rolled_back_from": from_env,
+        "rolled_back_to": to_env,
+        "contract_id": contract_id
+    })))
+}
+
+pub async fn report_health_check(
+    State(state): State<AppState>,
+    payload: Result<Json<HealthCheckRequest>, JsonRejection>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let Json(req) = payload.map_err(map_json_rejection)?;
+
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
+        .bind(&req.contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "ContractNotFound",
+                format!("Contract not found: {}", req.contract_id),
+            ),
+            _ => db_internal_error("get contract for health check", err),
+        })?;
+
+    let env_str = match req.environment {
+        DeploymentEnvironment::Blue => "blue",
+        DeploymentEnvironment::Green => "green",
+    };
+
+    if req.passed {
+        sqlx::query(
+            "UPDATE contract_deployments 
+             SET health_checks_passed = health_checks_passed + 1, 
+                 last_health_check_at = NOW()
+             WHERE contract_id = $1 AND environment = $2",
+        )
+        .bind(contract.id)
+        .bind(&req.environment)
+        .execute(&state.db)
+        .await
+        .map_err(|err| db_internal_error("update health check passed", err))?;
+    } else {
+        sqlx::query(
+            "UPDATE contract_deployments 
+             SET health_checks_failed = health_checks_failed + 1, 
+                 status = CASE WHEN health_checks_failed + 1 >= 3 THEN 'failed' ELSE status END,
+                 last_health_check_at = NOW()
+             WHERE contract_id = $1 AND environment = $2",
+        )
+        .bind(contract.id)
+        .bind(&req.environment)
+        .execute(&state.db)
+        .await
+        .map_err(|err| db_internal_error("update health check failed", err))?;
+    }
+
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "environment": env_str,
+        "passed": req.passed
+    })))
+}
+
+pub async fn get_deployment_status(
+    State(state): State<AppState>,
+    Path(contract_id): Path<String>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
+        .bind(&contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| match err {
+            sqlx::Error::RowNotFound => ApiError::not_found(
+                "ContractNotFound",
+                format!("Contract not found: {}", contract_id),
+            ),
+            _ => db_internal_error("get contract", err),
+        })?;
+
+    let deployments: Vec<ContractDeployment> = sqlx::query_as(
+        "SELECT * FROM contract_deployments 
+         WHERE contract_id = $1 
+         ORDER BY deployed_at DESC",
+    )
+    .bind(contract.id)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get deployments", err))?;
+
+    let active = deployments.iter().find(|d| matches!(d.status, DeploymentStatus::Active));
+    let blue = deployments.iter().find(|d| matches!(d.environment, DeploymentEnvironment::Blue));
+    let green = deployments.iter().find(|d| matches!(d.environment, DeploymentEnvironment::Green));
+
+    Ok(Json(serde_json::json!({
+        "contract_id": contract_id,
+        "active": active,
+        "blue": blue,
+        "green": green
+    })))
+}
+
 pub async fn route_not_found() -> ApiError {
     ApiError::not_found("RouteNotFound", "The requested endpoint does not exist")
 }

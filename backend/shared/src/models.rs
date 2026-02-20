@@ -588,6 +588,46 @@ pub struct CostForecast {
     pub usage_pattern: String,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// BACKUP SYSTEM
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ContractBackup {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub backup_date: chrono::NaiveDate,
+    pub wasm_hash: String,
+    pub metadata: serde_json::Value,
+    pub state_snapshot: Option<serde_json::Value>,
+    pub storage_size_bytes: i64,
+    pub verified: bool,
+    pub primary_region: String,
+    pub backup_regions: Vec<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateBackupRequest {
+    pub include_state: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestoreBackupRequest {
+    pub backup_date: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BackupRestoration {
+    pub id: Uuid,
+    pub backup_id: Uuid,
+    pub restored_by: Uuid,
+    pub restore_duration_ms: i32,
+    pub success: bool,
+    pub error_message: Option<String>,
+    pub restored_at: DateTime<Utc>,
+}
+
 impl std::fmt::Display for DeploymentEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
          match self {

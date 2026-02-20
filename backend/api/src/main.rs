@@ -4,6 +4,8 @@ mod aggregation;
 mod analytics;
 mod audit_handlers;
 mod audit_routes;
+mod backup_handlers;
+mod backup_routes;
 mod benchmark_engine;
 mod benchmark_handlers;
 mod benchmark_routes;
@@ -100,6 +102,7 @@ async fn main() -> Result<()> {
         .merge(maintenance_routes::maintenance_routes())
         .merge(maturity_routes::maturity_routes())
         .merge(cost_routes::cost_routes())
+        .merge(backup_routes::backup_routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_logger))
         .layer(middleware::from_fn_with_state(

@@ -79,6 +79,19 @@ jobs:
           test -f cli/src/costs.rs && echo "✓ CLI module present"
           test -f docs/COST_ESTIMATION.md && echo "✓ Documentation present"
           echo "✓ All cost estimation files present"
+          
+  check-backup-system-feature:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify backup system files
+        run: |
+          echo "Checking backup system implementation..."
+          test -f backend/api/src/backup_handlers.rs && echo "✓ Handlers present"
+          test -f backend/api/src/backup_routes.rs && echo "✓ Routes present"
+          test -f database/migrations/007_backup_system.sql && echo "✓ Migration present"
+          test -f cli/src/backup.rs && echo "✓ CLI module present"
+          echo "✓ All backup system files present"
 
   format-check:
     runs-on: ubuntu-latest

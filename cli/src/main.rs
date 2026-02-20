@@ -1,4 +1,5 @@
 mod commands;
+mod backup;
 mod config;
 mod costs;
 mod export;
@@ -187,6 +188,55 @@ pub enum Commands {
         /// Show cost forecast
         #[arg(long)]
         forecast: bool,
+    },
+
+    /// Backup and restore contracts
+    Backup {
+        #[command(subcommand)]
+        action: BackupCommands,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum BackupCommands {
+    /// Create a backup of a contract
+    Create {
+        /// Contract ID
+        contract_id: String,
+
+        /// Include state snapshot
+        #[arg(long)]
+        include_state: bool,
+    },
+
+    /// List backups for a contract
+    List {
+        /// Contract ID
+        contract_id: String,
+    },
+
+    /// Restore a contract from backup
+    Restore {
+        /// Contract ID
+        contract_id: String,
+
+        /// Backup date (YYYY-MM-DD)
+        backup_date: String,
+    },
+
+    /// Verify backup integrity
+    Verify {
+        /// Contract ID
+        contract_id: String,
+
+        /// Backup date (YYYY-MM-DD)
+        backup_date: String,
+    },
+
+    /// Show backup statistics
+    Stats {
+        /// Contract ID
+        contract_id: String,
     },
 }
 
@@ -440,6 +490,34 @@ async fn main() -> Result<()> {
                 forecast,
             )
             .await?;
+        }
+
+        // ── Backup system ────────────────────────────────────────────────────
+        Commands::Backup { action } => match action {
+            BackupCommands::Create {
+                contract_id,
+                include_state,
+            } => {
+                backup::create_backup(&cli.api_url, &contract_id, include_state).await?;
+            }
+            BackupCommands::List { contract_id } => {
+                backup::list_backups(&cli.api_url, &contract_id).await?;
+            }
+            BackupCommands::Restore {
+                contract_id,
+                backup_date,
+            } => {
+                backup::restore_backup(&cli.api_url, &contract_id, &backup_date).await?;
+            }
+            BackupCommands::Verify {
+                contract_id,
+                backup_date,
+            } => {
+                backup::verify_backup(&cli.api_url, &contract_id, &backup_date).await?;
+            }
+            BackupCommands::Stats { contract_id } => {
+                backup::backup_stats(&cli.api_url, &contract_id).await?;
+            }
         }
 
         // ── Multi-sig commands (issue #47) ───────────────────────────────────

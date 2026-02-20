@@ -7,20 +7,19 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use serde::Deserialize;
 use uuid::Uuid;
 
 use crate::{
     checklist::all_checks,
     detector::detect_all,
     error::{ApiError, ApiResult},
+    models::{
+        AuditCheckRow, AuditRecord, AuditResponse, CheckStatus, CheckWithStatus, ChecklistItem,
+        ContractSecuritySummary, CreateAuditRequest, DetectionMethod, ExportRequest,
+        UpdateCheckRequest,
+    },
     scoring::{build_markdown_report, calculate_scores, score_badge},
     state::AppState,
-};
-use shared::models::{
-    AuditCheckRow, AuditRecord, AuditResponse, CategoryScore, CheckStatus, CheckWithStatus,
-    ContractSecuritySummary, CreateAuditRequest, DetectionMethod, ExportRequest,
-    UpdateCheckRequest,
 };
 
 // ─────────────────────────────────────────────────────────
@@ -116,7 +115,7 @@ pub async fn create_security_audit(
     // Seed all check rows
     let all = all_checks();
     for item in &all {
-        let (status, evidence, auto_detected) = match auto_results.get(&item.id) {
+        let (status, evidence, auto_detected) = match auto_results.get(item.id) {
             Some(result) => (result.status.clone(), result.evidence.clone(), true),
             None => (CheckStatus::Pending, None, false),
         };
@@ -374,7 +373,7 @@ pub async fn get_checklist_definition() -> Json<serde_json::Value> {
     let items: Vec<serde_json::Value> = checks
         .iter()
         .map(|c| {
-            let (detection_type, auto_patterns) = match &c.detection {
+            let (detection_type, auto_patterns): (&str, Vec<String>) = match &c.detection {
                 DetectionMethod::Automatic { patterns } => ("automatic", patterns.clone()),
                 DetectionMethod::SemiAutomatic { patterns } => ("semi_automatic", patterns.clone()),
                 DetectionMethod::Manual => ("manual", vec![]),
@@ -430,21 +429,21 @@ async fn build_audit_response(
     let checks_with_status: Vec<CheckWithStatus> = all
         .iter()
         .map(|item| {
-            let row = status_map.get(&item.id);
-            let (detection_type, auto_patterns) = match &item.detection {
+            let row = status_map.get(item.id);
+            let (detection_type, auto_patterns): (&'static str, Vec<String>) = match &item.detection {
                 DetectionMethod::Automatic { patterns } => ("automatic", patterns.clone()),
                 DetectionMethod::SemiAutomatic { patterns } => ("semi_automatic", patterns.clone()),
                 DetectionMethod::Manual => ("manual", vec![]),
             };
             CheckWithStatus {
-                id: item.id.clone(),
+                id: item.id,
                 category: item.category.to_string(),
-                title: item.title.clone(),
-                description: item.description.clone(),
+                title: item.title,
+                description: item.description,
                 severity: format!("{:?}", item.severity),
-                detection_type: detection_type.to_string(),
+                detection_type,
                 auto_patterns,
-                remediation: item.remediation.clone(),
+                remediation: item.remediation,
                 references: item.references.clone(),
                 status: row.map(|r| r.status.clone()).unwrap_or_default(),
                 notes: row.and_then(|r| r.notes.clone()),

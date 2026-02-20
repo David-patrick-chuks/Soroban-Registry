@@ -10,9 +10,11 @@ use axum::{
     Json,
 };
 use shared::{
-    Contract, ContractDeployment, ContractSearchParams, ContractVersion, DeployGreenRequest,
-    DeploymentEnvironment, DeploymentStatus, DeploymentSwitch, HealthCheckRequest,
-    PaginatedResponse, PublishRequest, Publisher, SwitchDeploymentRequest, VerifyRequest,
+    AnalyticsEventType, Contract, ContractAnalyticsResponse, ContractDeployment,
+    ContractSearchParams, ContractVersion, DeployGreenRequest, DeploymentEnvironment,
+    DeploymentStats, DeploymentStatus, DeploymentSwitch, HealthCheckRequest, InteractorStats,
+    PaginatedResponse, PublishRequest, Publisher, SwitchDeploymentRequest, TimelineEntry, TopUser,
+    VerifyRequest,
 };
 use uuid::Uuid;
 
@@ -537,127 +539,40 @@ pub async fn deploy_green(
 ) -> ApiResult<Json<ContractDeployment>> {
     let Json(req) = payload.map_err(map_json_rejection)?;
 
-    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE contract_id = $1")
-        .bind(&req.contract_id)
+    let contract_uuid = Uuid::parse_str(&req.contract_id).map_err(|_| {
+        ApiError::bad_request(
+            "InvalidContractId",
+            format!("Invalid contract ID format: {}", req.contract_id),
+        )
+    })?;
+
+    // Verify the contract exists
+    let _contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
+        .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
         .map_err(|err| match err {
             sqlx::Error::RowNotFound => ApiError::not_found(
                 "ContractNotFound",
-                format!("No contract found with ID: {}", id),
+                format!("No contract found with ID: {}", req.contract_id),
             ),
-            _ => db_internal_error("get contract for analytics", err),
+            _ => db_internal_error("get contract for deploy", err),
         })?;
 
-    let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
-
-    // ΓöÇΓöÇ Deployment stats ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    let deploy_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM analytics_events \
-         WHERE contract_id = $1 AND event_type = 'contract_deployed'",
+    // Create a new green deployment record
+    let deployment: ContractDeployment = sqlx::query_as(
+        r#"INSERT INTO contract_deployments
+               (contract_id, environment, wasm_hash, status)
+           VALUES ($1, 'green', $2, 'testing')
+           RETURNING *"#,
     )
-    .bind(id)
+    .bind(contract_uuid)
+    .bind(&req.wasm_hash)
     .fetch_one(&state.db)
     .await
-    .map_err(|e| db_internal_error("deployment count", e))?;
+    .map_err(|e| db_internal_error("create green deployment", e))?;
 
-    let unique_deployers: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT user_address) FROM analytics_events \
-         WHERE contract_id = $1 AND event_type = 'contract_deployed' AND user_address IS NOT NULL",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("unique deployers", e))?;
-
-    let by_network: serde_json::Value = sqlx::query_scalar(
-        r#"
-        SELECT COALESCE(
-            jsonb_object_agg(COALESCE(network::text, 'unknown'), cnt),
-            '{}'::jsonb
-        )
-        FROM (
-            SELECT network, COUNT(*) AS cnt
-            FROM analytics_events
-            WHERE contract_id = $1 AND event_type = 'contract_deployed'
-            GROUP BY network
-        ) sub
-        "#,
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("network breakdown", e))?;
-
-    // ΓöÇΓöÇ Interactor stats ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    let unique_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(DISTINCT user_address) FROM analytics_events \
-         WHERE contract_id = $1 AND user_address IS NOT NULL",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| db_internal_error("unique interactors", e))?;
-
-    let top_user_rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT user_address, COUNT(*) AS cnt FROM analytics_events \
-         WHERE contract_id = $1 AND user_address IS NOT NULL \
-         GROUP BY user_address ORDER BY cnt DESC LIMIT 10",
-    )
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| db_internal_error("top users", e))?;
-
-    let top_users: Vec<TopUser> = top_user_rows
-        .into_iter()
-        .map(|(address, count)| TopUser { address, count })
-        .collect();
-
-    // ΓöÇΓöÇ Timeline (last 30 days) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    let timeline_rows: Vec<(chrono::NaiveDate, i64)> = sqlx::query_as(
-        r#"
-        SELECT d::date AS date, COALESCE(e.cnt, 0) AS count
-        FROM generate_series(
-            ($1::timestamptz)::date,
-            CURRENT_DATE,
-            '1 day'::interval
-        ) d
-        LEFT JOIN (
-            SELECT DATE(created_at) AS event_date, COUNT(*) AS cnt
-            FROM analytics_events
-            WHERE contract_id = $2
-              AND created_at >= $1
-            GROUP BY DATE(created_at)
-        ) e ON d::date = e.event_date
-        ORDER BY d::date
-        "#,
-    )
-    .bind(thirty_days_ago)
-    .bind(id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| db_internal_error("timeline", e))?;
-
-    let timeline: Vec<TimelineEntry> = timeline_rows
-        .into_iter()
-        .map(|(date, count)| TimelineEntry { date, count })
-        .collect();
-
-    // ΓöÇΓöÇ Build response ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
-    Ok(Json(ContractAnalyticsResponse {
-        contract_id: id,
-        deployments: DeploymentStats {
-            count: deploy_count,
-            unique_users: unique_deployers,
-            by_network,
-        },
-        interactors: InteractorStats {
-            unique_count,
-            top_users,
-        },
-        timeline,
-    }))
+    Ok(Json(deployment))
 }
 
 

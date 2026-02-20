@@ -14,7 +14,7 @@ use crate::{
     error::{ApiError, ApiResult},
     state::AppState,
 };
-use shared::models::{
+use crate::models::{
     BenchmarkComparison, BenchmarkRecord, BenchmarkResponse, BenchmarkRun, BenchmarkStatus,
     BenchmarkTrendPoint, ContractBenchmarkSummary, PerformanceAlert, RunBenchmarkRequest,
 };

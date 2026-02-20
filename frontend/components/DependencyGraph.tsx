@@ -314,7 +314,7 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
       pinGroup.append("circle")
         .attr("r", 5)
         .attr("cx", (d) => d.radius - 4)
-        .attr("cy", -d3.max([6, 6])!)
+        .attr("cy", -6)
         .attr("fill", "#f97316")
         .attr("stroke", "#1f2937")
         .attr("stroke-width", 1.5);

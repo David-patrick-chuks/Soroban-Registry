@@ -1,7 +1,7 @@
 "use client";
 
 import * as d3 from "d3";
-import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useState } from "react";
+import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useState, useMemo } from "react";
 import type { GraphNode, GraphEdge } from "@/lib/api";
 
 // ─── Public handle type ──────────────────────────────────────────────────────
@@ -69,6 +69,10 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
     const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
     const [tooltip, setTooltip] = useState<TooltipState | null>(null);
     const containerRef = useRef<HTMLDivElement>(null);
+
+    // ── Large-graph performance flags ─────────────────────────────────────────
+    const isLargeGraph = nodes.length > 200;
+    const isVeryLargeGraph = nodes.length > 500;
 
     // ── Zoom helpers ────────────────────────────────────────────────────────
     const getZoom = useCallback(() => zoomRef.current, []);
@@ -223,12 +227,17 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
       const simulation = d3.forceSimulation<SimNode>(simNodes)
         .force("link", d3.forceLink<SimNode, SimLink>(simLinks)
           .id((d) => d.id)
-          .distance(80)
+          .distance(isLargeGraph ? 50 : 80)
           .strength(0.4))
-        .force("charge", d3.forceManyBody().strength(-180).distanceMax(400))
+        .force("charge", d3.forceManyBody()
+          .strength(isVeryLargeGraph ? -60 : isLargeGraph ? -120 : -180)
+          .distanceMax(isLargeGraph ? 200 : 400))
         .force("center", d3.forceCenter(0, 0))
-        .force("collision", d3.forceCollide<SimNode>().radius((d) => d.radius + 4))
-        .alphaDecay(0.025);
+        .force("collision", d3.forceCollide<SimNode>().radius((d) => d.radius + (isLargeGraph ? 2 : 4)))
+        // Faster convergence for large graphs — fewer ticks means lower CPU cost
+        .alphaDecay(isVeryLargeGraph ? 0.06 : isLargeGraph ? 0.04 : 0.025)
+        // Stop simulation once sufficiently stable
+        .alphaMin(0.001);
 
       // ── Edges ──
       const linkGroup = g.append("g").attr("class", "links");
@@ -237,9 +246,10 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
         .join("line")
         .attr("class", "graph-edge")
         .attr("stroke", "#374151")
-        .attr("stroke-width", 1.5)
-        .attr("stroke-opacity", 0.6)
-        .attr("marker-end", "url(#arrow)");
+        .attr("stroke-width", isLargeGraph ? 0.8 : 1.5)
+        .attr("stroke-opacity", isLargeGraph ? 0.35 : 0.6)
+        // Skip arrows on very large graphs — avoids thousands of marker lookups
+        .attr("marker-end", isVeryLargeGraph ? null : "url(#arrow)");
 
       // ── Nodes (group containing circle + text) ──
       const nodeGroup = g.append("g").attr("class", "nodes");
@@ -261,14 +271,16 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
         })
         .attr("stroke-width", 2.5);
 
-      // Label
-      nodeEls.append("text")
-        .attr("dy", (d) => d.radius + 12)
-        .attr("text-anchor", "middle")
-        .attr("fill", "#d1d5db")
-        .attr("font-size", "10px")
-        .attr("pointer-events", "none")
-        .text((d) => d.data.name.length > 14 ? d.data.name.slice(0, 13) + "…" : d.data.name);
+      // Label — skip for large graphs to reduce DOM size significantly
+      if (!isLargeGraph) {
+        nodeEls.append("text")
+          .attr("dy", (d) => d.radius + 12)
+          .attr("text-anchor", "middle")
+          .attr("fill", "#d1d5db")
+          .attr("font-size", "10px")
+          .attr("pointer-events", "none")
+          .text((d) => d.data.name.length > 14 ? d.data.name.slice(0, 13) + "…" : d.data.name);
+      }
 
       // ── Drag ──
       const drag = d3.drag<SVGGElement, SimNode>()
@@ -335,18 +347,31 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
         svg.call(
           zoom.transform,
           d3.zoomIdentity.translate(rect2.width / 2, rect2.height / 2).scale(
-            Math.min(1, Math.max(0.1, 6 / Math.sqrt(simNodes.length + 1)))
+            Math.min(1, Math.max(0.05, 5 / Math.sqrt(simNodes.length + 1)))
           )
         );
-      }, 600);
+      }, isVeryLargeGraph ? 1500 : isLargeGraph ? 900 : 600);
+
+      // Responsive resize — update SVG dimensions on container resize
+      let resizeObserver: ResizeObserver | null = null;
+      if (typeof ResizeObserver !== "undefined") {
+        resizeObserver = new ResizeObserver((entries) => {
+          for (const entry of entries) {
+            const { width, height } = entry.contentRect;
+            d3.select(svgEl).attr("width", width).attr("height", height);
+          }
+        });
+        if (containerRef.current) resizeObserver.observe(containerRef.current);
+      }
 
       return () => {
         clearTimeout(initialZoomTimer);
+        resizeObserver?.disconnect();
         simulation.stop();
         d3.select(svgEl).selectAll("*").remove();
       };
       // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [nodes, edges, dependentCounts]);
+    }, [nodes, edges, dependentCounts, isLargeGraph, isVeryLargeGraph]);
 
     // ── Highlight selected node & neighbours ────────────────────────────────
     useEffect(() => {
@@ -425,8 +450,17 @@ const DependencyGraph = forwardRef<DependencyGraphHandle, DependencyGraphProps>(
         <svg
           ref={svgRef}
           className="w-full h-full"
-          style={{ display: "block" }}
+          style={{ display: "block", touchAction: "none" }}
         />
+
+        {/* Performance notice for very large graphs */}
+        {isVeryLargeGraph && (
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 pointer-events-none">
+            <div className="bg-amber-900/80 backdrop-blur border border-amber-700/50 rounded-lg px-3 py-1.5 text-xs text-amber-200">
+              Large graph ({nodes.length.toLocaleString()} nodes) — labels hidden for performance
+            </div>
+          </div>
+        )}
 
         {/* Tooltip */}
         {tooltip && (

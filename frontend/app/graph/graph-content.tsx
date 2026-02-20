@@ -357,7 +357,7 @@ export function GraphContent() {
                     {/* Link */}
                     <a
                         href={`/contracts/${selectedNode.contract_id}`}
-                        className="mt-3 flex items-center justify-center gap-1.5 w-full py-1.5 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-700/50 text-blue-400 hover:text-blue-300 rounded-lg text-xs font-medium transition-colors"
+                        className="mt-3 flex items-center justify-center gap-1.5 w-full py-1.5 bg-blue-600/20 hover:bg-blue-600/40 border border-blue-700/50 text-blue-400 hover:text-blue-300 rounded-lg text-xs font-medium transition-colors focus-visible:ring-1 focus-visible:ring-blue-500 focus:outline-none"
                     >
                         <ExternalLink className="w-3 h-3" />
                         View Contract Details

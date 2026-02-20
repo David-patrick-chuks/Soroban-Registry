@@ -818,7 +818,7 @@ async fn main() -> Result<()> {
         .merge(routes::ab_test_routes())
         .merge(routes::performance_routes())
         .merge(multisig_routes::multisig_routes())
-        .merge(audit_routes::audit_routes())
+        .merge(audit_routes::security_audit_routes())
         .merge(benchmark_routes::benchmark_routes())
         .merge(contract_history_routes::contract_history_routes())
         .merge(template_routes::template_routes())

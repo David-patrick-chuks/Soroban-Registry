@@ -7,9 +7,11 @@ use crate::{handlers, state::AppState};
 
 /// Contract-related routes
 pub fn contract_routes() -> Router<AppState> {
-
     let contracts_nested = Router::new()
-        .route("/", get(handlers::list_contracts).post(handlers::publish_contract))
+        .route(
+            "/",
+            get(handlers::list_contracts).post(handlers::publish_contract),
+        )
         .route("/graph", get(handlers::get_contract_graph))
         .route("/verify", post(handlers::verify_contract))
         .route("/{id}", get(handlers::get_contract))

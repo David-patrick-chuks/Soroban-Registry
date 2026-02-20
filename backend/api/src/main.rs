@@ -1,5 +1,5 @@
-mod routes;
 mod handlers;
+mod routes;
 mod state;
 
 use anyhow::Result;
@@ -28,8 +28,7 @@ async fn main() -> Result<()> {
         .init();
 
     // Database connection
-    let database_url = std::env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     let pool = PgPoolOptions::new()
         .max_connections(5)

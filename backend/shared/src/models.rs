@@ -7,8 +7,8 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Contract {
     pub id: Uuid,
-    pub contract_id: String,        // Stellar contract ID (C...)
-    pub wasm_hash: String,           // Hash of the WASM bytecode
+    pub contract_id: String, // Stellar contract ID (C...)
+    pub wasm_hash: String,   // Hash of the WASM bytecode
     pub name: String,
     pub description: Option<String>,
     pub publisher_id: Uuid,

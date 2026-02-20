@@ -3,7 +3,11 @@ use axum::{
     Router,
 };
 
-use crate::{handlers, state::AppState};
+use crate::{handlers, metrics_handler, state::AppState};
+
+pub fn observability_routes() -> Router<AppState> {
+    Router::new().route("/metrics", get(metrics_handler::metrics_endpoint))
+}
 
 pub fn contract_routes() -> Router<AppState> {
     Router::new()

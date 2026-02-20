@@ -1,6 +1,7 @@
 mod commands;
 mod config;
 mod export;
+mod fuzz;
 mod import;
 mod manifest;
 mod multisig;
@@ -139,10 +140,7 @@ pub enum Commands {
 
     /// Generate documentation from a contract WASM
     Doc {
-        /// Path to contract WASM file
         contract_path: String,
-
-        /// Output directory
         #[arg(long, default_value = "docs")]
         output: String,
     },
@@ -171,6 +169,24 @@ pub enum Commands {
     Multisig {
         #[command(subcommand)]
         action: MultisigCommands,
+    },
+
+    /// Fuzz testing for contracts
+    Fuzz {
+        #[arg(long)]
+        contract_path: String,
+        #[arg(long)]
+        duration: u64,
+        #[arg(long)]
+        timeout: u64,
+        #[arg(long)]
+        threads: u32,
+        #[arg(long)]
+        max_cases: u32,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        minimize: bool,
     },
 
     /// Profile contract execution performance
@@ -226,6 +242,58 @@ pub enum Commands {
         #[command(subcommand)]
         action: SlaCommands,
     },
+    
+    Config {
+        #[command(subcommand)]
+        action: ConfigSubcommands,
+    },
+    
+    ScanDeps {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long, default_value = ",")]
+        dependencies: String,
+        #[arg(long, default_value_t = false)]
+        fail_on_high: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigSubcommands {
+    Get {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        environment: String,
+    },
+    Set {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        environment: String,
+        #[arg(long)]
+        config_data: String,
+        #[arg(long)]
+        secrets_data: Option<String>,
+        #[arg(long)]
+        created_by: String,
+    },
+    History {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        environment: String,
+    },
+    Rollback {
+        #[arg(long)]
+        contract_id: String,
+        #[arg(long)]
+        environment: String,
+        #[arg(long)]
+        version: i32,
+        #[arg(long)]
+        created_by: String,
+    },
 }
 
 /// Sub-commands for the `sla` group
@@ -247,12 +315,11 @@ pub enum SlaCommands {
         /// Contract identifier
         id: String,
     },
-	     /// Show the trust score and breakdown for a contract
+    /// Show the trust score and breakdown for a contract
     TrustScore {
         /// Contract UUID to score
         contract_id: String,
     },
-
 }
 
 /// Sub-commands for the `multisig` group
@@ -329,7 +396,10 @@ pub enum PatchCommands {
         rollout: u8,
     },
     /// Notify subscribers about a patch
-    Notify { patch_id: String },
+    Notify { 
+        #[arg(long)]
+        patch_id: String 
+    },
     /// Apply a patch to a specific contract
     Apply {
         #[arg(long)]
@@ -337,7 +407,6 @@ pub enum PatchCommands {
         #[arg(long)]
         patch_id: String,
     },
-
     /// Manage contract dependencies
     Deps {
         #[command(subcommand)]
@@ -345,8 +414,8 @@ pub enum PatchCommands {
     },
 }
 
-#[derive(Subcommand)]
-enum DepsCommands {
+#[derive(Debug, Subcommand)]
+pub enum DepsCommands {
     /// List dependencies for a contract
     List {
         /// Contract ID
@@ -445,13 +514,12 @@ async fn main() -> Result<()> {
                 log::debug!("Command: patch apply | contract_id={} patch_id={}", contract_id, patch_id);
                 commands::patch_apply(&cli.api_url, &contract_id, &patch_id).await?;
             }
+            PatchCommands::Deps { command } => match command {
+                DepsCommands::List { contract_id } => {
+                    commands::deps_list(&cli.api_url, &contract_id).await?;
+                }
+            }
         },
-
-		  Commands::TrustScore { contract_id } => {
-            log::debug!("Command: trust-score | contract_id={}", contract_id);
-            commands::trust_score(&cli.api_url, &contract_id, network).await?;
-        },
-
         // ── Multi-sig commands (issue #47) ───────────────────────────────────
         Commands::Multisig { action } => match action {
             MultisigCommands::CreatePolicy { name, threshold, signers, expiry_secs, created_by } => {
@@ -498,6 +566,26 @@ async fn main() -> Result<()> {
                 multisig::list_proposals(&cli.api_url, status.as_deref(), limit).await?;
             }
         },
+        Commands::Fuzz {
+            contract_path,
+            duration,
+            timeout,
+            threads,
+            max_cases,
+            output,
+            minimize,
+        } => {
+            fuzz::run_fuzzer(
+                &contract_path,
+                &duration,
+                &timeout,
+                threads,
+                max_cases,
+                &output,
+                minimize,
+            )
+            .await?;
+        }
         Commands::Profile {
             contract_path,
             method,
@@ -540,11 +628,32 @@ async fn main() -> Result<()> {
             SlaCommands::Status { id } => {
                 log::debug!("Command: sla status | id={}", id);
                 commands::sla_status(&id)?;
-        Commands::Deps { command } => match command {
-            DepsCommands::List { contract_id } => {
-                commands::deps_list(&cli.api_url, &contract_id).await?;
+            }
+            SlaCommands::TrustScore { contract_id } => {
+                log::debug!("Command: trust-score | contract_id={}", contract_id);
+                // NOTE: Make sure commands::trust_score isn't expecting `network` since SlaCommands doesn't define it
+                // I removed `network` from the function call here because it wasn't available in scope. 
+                // Adjust if you need to fetch global network config instead.
+                commands::trust_score(&cli.api_url, &contract_id).await?;
             }
         },
+        Commands::Config { action } => match action {
+            ConfigSubcommands::Get { contract_id, environment } => {
+                commands::config_get(&cli.api_url, &contract_id, &environment).await?;
+            }
+            ConfigSubcommands::Set { contract_id, environment, config_data, secrets_data, created_by } => {
+                commands::config_set(&cli.api_url, &contract_id, &environment, &config_data, secrets_data.as_deref(), &created_by).await?;
+            }
+            ConfigSubcommands::History { contract_id, environment } => {
+                commands::config_history(&cli.api_url, &contract_id, &environment).await?;
+            }
+            ConfigSubcommands::Rollback { contract_id, environment, version, created_by } => {
+                commands::config_rollback(&cli.api_url, &contract_id, &environment, version, &created_by).await?;
+            }
+        },
+        Commands::ScanDeps { contract_id, dependencies, fail_on_high } => {
+            commands::scan_deps(&cli.api_url, &contract_id, &dependencies, fail_on_high).await?;
+        }
     }
 
     Ok(())

@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import FormalVerificationPanel from "@/components/FormalVerificationPanel";
 
 
 function ContractDetailsContent() {
@@ -172,6 +173,9 @@ function ContractDetailsContent() {
               <div className="text-xs text-gray-400 dark:text-gray-500">View version compatibility</div>
             </div>
           </Link>
+
+          {/* Formal Verification Panel */}
+          <FormalVerificationPanel contractId={contract.id} />
         </div>
       </div>
     </div>

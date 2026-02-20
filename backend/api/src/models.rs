@@ -216,3 +216,31 @@ pub struct ExportRequest {
 fn default_true() -> bool {
     true
 }
+// ─────────────────────────────────────────────────────────
+// Network Routing Types
+// ─────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum RoutingStrategy {
+    Auto,
+    Manual(String),
+}
+
+impl std::fmt::Display for RoutingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RoutingStrategy::Auto => write!(f, "auto"),
+            RoutingStrategy::Manual(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+/// Metadata for network selection criteria
+#[derive(Debug, Serialize, Deserialize)]
+pub struct NetworkCriteria {
+    pub id: String,
+    pub stability: f32, // 0.0 - 1.0
+    pub cost_multiplier: f32, 
+    pub latency_ms: u32,
+}

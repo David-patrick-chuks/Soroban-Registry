@@ -12,8 +12,7 @@ mod aggregation;
 mod analytics;
 mod audit_handlers;
 mod audit_routes;
-mod backup_handlers;
-mod backup_routes;
+mod compatibility_handlers;
 mod benchmark_engine;
 mod benchmark_handlers;
 mod benchmark_routes;
@@ -26,6 +25,8 @@ mod contract_history_handlers;
 mod contract_history_routes;
 mod detector;
 mod error;
+mod event_handlers;
+mod event_routes;
 mod handlers;
 mod metrics;
 mod observability;
@@ -49,6 +50,8 @@ mod trust;
 mod health_monitor;
 mod migration_cli;
 mod validation;
+mod formal_verification_handlers;
+mod formal_verification_routes;
 mod type_safety;
 mod type_safety_handlers;
 mod type_safety_routes;
@@ -864,6 +867,7 @@ async fn main() -> Result<()> {
         .merge(contract_history_routes::contract_history_routes())
         .merge(template_routes::template_routes())
         .merge(scan_routes::scan_routes())
+        .merge(formal_verification_routes::formal_verification_routes())
         .route("/metrics", get(observability::metrics_handler))
         .merge(routes::observability_routes())
         .merge(residency_routes::residency_routes())

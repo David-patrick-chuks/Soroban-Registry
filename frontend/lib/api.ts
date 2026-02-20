@@ -364,3 +364,81 @@ export const maturityApi = {
     return response.json();
   },
 };
+
+export interface CostEstimateRequest {
+  method_name: string;
+  invocations?: number;
+  storage_growth_kb?: number;
+}
+
+export interface CostEstimate {
+  method_name: string;
+  gas_cost: number;
+  storage_cost: number;
+  bandwidth_cost: number;
+  total_stroops: number;
+  total_xlm: number;
+  invocations: number;
+}
+
+export interface BatchCostEstimate {
+  estimates: CostEstimate[];
+  total_stroops: number;
+  total_xlm: number;
+}
+
+export interface CostOptimization {
+  current_cost: number;
+  optimized_cost: number;
+  savings_percent: number;
+  suggestions: string[];
+}
+
+export interface CostForecast {
+  daily_cost_xlm: number;
+  monthly_cost_xlm: number;
+  yearly_cost_xlm: number;
+  usage_pattern: string;
+}
+
+export const costApi = {
+  async estimate(contractId: string, request: CostEstimateRequest): Promise<CostEstimate> {
+    const response = await fetch(`${API_URL}/api/contracts/${contractId}/cost-estimate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) throw new Error('Failed to estimate cost');
+    return response.json();
+  },
+
+  async batchEstimate(contractId: string, requests: CostEstimateRequest[]): Promise<BatchCostEstimate> {
+    const response = await fetch(`${API_URL}/api/contracts/${contractId}/cost-estimate/batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requests),
+    });
+    if (!response.ok) throw new Error('Failed to batch estimate');
+    return response.json();
+  },
+
+  async optimize(contractId: string, estimate: CostEstimate): Promise<CostOptimization> {
+    const response = await fetch(`${API_URL}/api/contracts/${contractId}/cost-estimate/optimize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(estimate),
+    });
+    if (!response.ok) throw new Error('Failed to optimize costs');
+    return response.json();
+  },
+
+  async forecast(contractId: string, request: CostEstimateRequest): Promise<CostForecast> {
+    const response = await fetch(`${API_URL}/api/contracts/${contractId}/cost-estimate/forecast`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(request),
+    });
+    if (!response.ok) throw new Error('Failed to forecast costs');
+    return response.json();
+  },
+};

@@ -10,6 +10,8 @@ mod benchmark_routes;
 mod cache;
 mod cache_benchmark;
 mod checklist;
+mod cost_handlers;
+mod cost_routes;
 mod detector;
 mod error;
 mod handlers;
@@ -97,6 +99,7 @@ async fn main() -> Result<()> {
         .merge(benchmark_routes::benchmark_routes())
         .merge(maintenance_routes::maintenance_routes())
         .merge(maturity_routes::maturity_routes())
+        .merge(cost_routes::cost_routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_logger))
         .layer(middleware::from_fn_with_state(

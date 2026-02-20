@@ -543,6 +543,51 @@ pub struct MaturityCriterion {
     pub description: String,
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// COST ESTIMATION
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimateRequest {
+    pub method_name: String,
+    pub invocations: Option<i64>,
+    pub storage_growth_kb: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostEstimate {
+    pub method_name: String,
+    pub gas_cost: i64,
+    pub storage_cost: i64,
+    pub bandwidth_cost: i64,
+    pub total_stroops: i64,
+    pub total_xlm: f64,
+    pub invocations: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchCostEstimate {
+    pub estimates: Vec<CostEstimate>,
+    pub total_stroops: i64,
+    pub total_xlm: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostOptimization {
+    pub current_cost: i64,
+    pub optimized_cost: i64,
+    pub savings_percent: f64,
+    pub suggestions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CostForecast {
+    pub daily_cost_xlm: f64,
+    pub monthly_cost_xlm: f64,
+    pub yearly_cost_xlm: f64,
+    pub usage_pattern: String,
+}
+
 impl std::fmt::Display for DeploymentEnvironment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
          match self {

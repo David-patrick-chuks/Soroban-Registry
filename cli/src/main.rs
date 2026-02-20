@@ -1,5 +1,6 @@
 mod commands;
 mod config;
+mod costs;
 mod export;
 mod import;
 mod manifest;
@@ -160,6 +161,32 @@ pub enum Commands {
     Multisig {
         #[command(subcommand)]
         action: MultisigCommands,
+    },
+
+    /// Estimate contract operation costs
+    Costs {
+        /// Contract ID
+        contract_id: String,
+
+        /// Method name to estimate
+        #[arg(long)]
+        method: String,
+
+        /// Number of invocations (default: 1)
+        #[arg(long)]
+        invocations: Option<i64>,
+
+        /// Storage growth in KB (default: 0)
+        #[arg(long)]
+        storage_kb: Option<i64>,
+
+        /// Show optimization suggestions
+        #[arg(long)]
+        optimize: bool,
+
+        /// Show cost forecast
+        #[arg(long)]
+        forecast: bool,
     },
 }
 
@@ -393,6 +420,27 @@ async fn main() -> Result<()> {
                 commands::patch_apply(&cli.api_url, &contract_id, &patch_id).await?;
             }
         },
+
+        // ── Cost estimation ──────────────────────────────────────────────────
+        Commands::Costs {
+            contract_id,
+            method,
+            invocations,
+            storage_kb,
+            optimize,
+            forecast,
+        } => {
+            costs::estimate_costs(
+                &cli.api_url,
+                &contract_id,
+                &method,
+                invocations,
+                storage_kb,
+                optimize,
+                forecast,
+            )
+            .await?;
+        }
 
         // ── Multi-sig commands (issue #47) ───────────────────────────────────
         Commands::Multisig { action } => match action {

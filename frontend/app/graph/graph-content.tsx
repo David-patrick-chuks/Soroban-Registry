@@ -151,6 +151,52 @@ export function GraphContent() {
         setSearchMatchIndex((i) => (i + 1) % searchMatches.length);
     }, [searchMatches.length]);
 
+    // Keyboard shortcuts
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore when typing in inputs
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+            const g = graphRef.current;
+            if (!g) return;
+            switch (e.key) {
+                case '=':
+                case '+':
+                    e.preventDefault();
+                    g.zoomIn();
+                    break;
+                case '-':
+                    e.preventDefault();
+                    g.zoomOut();
+                    break;
+                case 'r':
+                case 'R':
+                    g.resetZoom();
+                    break;
+                case 'ArrowUp':
+                    e.preventDefault();
+                    g.panUp();
+                    break;
+                case 'ArrowDown':
+                    e.preventDefault();
+                    g.panDown();
+                    break;
+                case 'ArrowLeft':
+                    e.preventDefault();
+                    g.panLeft();
+                    break;
+                case 'ArrowRight':
+                    e.preventDefault();
+                    g.panRight();
+                    break;
+                case 'Escape':
+                    setSelectedNode(null);
+                    break;
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, []);
+
     if (!demoMode && isLoading) {
         return (
             <div className="flex items-center justify-center h-[calc(100vh-4rem)]">
@@ -266,7 +312,7 @@ export function GraphContent() {
                         <div className="flex justify-between">
                             <span className="text-gray-400">Network</span>
                             <span className={`font-medium ${selectedNode.network === 'mainnet' ? 'text-green-400' :
-                                    selectedNode.network === 'testnet' ? 'text-blue-400' : 'text-purple-400'
+                                selectedNode.network === 'testnet' ? 'text-blue-400' : 'text-purple-400'
                                 }`}>{selectedNode.network}</span>
                         </div>
                         {selectedNode.category && (

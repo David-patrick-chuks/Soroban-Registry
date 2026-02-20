@@ -2,7 +2,8 @@
 
 import {
     Search, ZoomIn, ZoomOut, Maximize2, Download, FileImage,
-    GitBranch, Circle, Activity, Sparkles, ChevronUp, ChevronDown
+    GitBranch, Circle, Activity, Sparkles, ChevronUp, ChevronDown,
+    Keyboard
 } from 'lucide-react';
 
 interface GraphControlsProps {
@@ -152,6 +153,7 @@ export default function GraphControls({
                 <div className="bg-gray-900/90 backdrop-blur-xl border border-gray-700/50 rounded-xl p-3 shadow-2xl">
                     <p className="text-xs text-gray-400 mb-2 font-medium">Legend</p>
                     <div className="space-y-1.5 text-xs">
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Network</p>
                         <div className="flex items-center gap-2">
                             <Circle className="w-3 h-3 text-green-500 fill-green-500" />
                             <span className="text-gray-300">Mainnet</span>
@@ -164,13 +166,21 @@ export default function GraphControls({
                             <Circle className="w-3 h-3 text-purple-500 fill-purple-500" />
                             <span className="text-gray-300">Futurenet</span>
                         </div>
-                        <div className="flex items-center gap-2 pt-1 border-t border-gray-800">
+                        <div className="border-t border-gray-800 my-1" />
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Node Size</p>
+                        <div className="flex items-center gap-2 pt-0.5">
                             <div className="w-3 h-3 rounded-full border-2 border-amber-400" />
                             <span className="text-gray-300">Critical (≥5 deps)</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <div className="w-2 h-2 rounded-full bg-gray-400 mx-0.5" />
                             <span className="text-gray-400">Larger = more dependents</span>
+                        </div>
+                        <div className="border-t border-gray-800 my-1" />
+                        <p className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">Edges</p>
+                        <div className="flex items-center gap-2">
+                            <GitBranch className="w-3 h-3 text-gray-400" />
+                            <span className="text-gray-400">Arrow = dependency direction</span>
                         </div>
                     </div>
                 </div>
@@ -192,6 +202,38 @@ export default function GraphControls({
                     <div className="text-center">
                         <div className="text-lg font-bold text-amber-400">{criticalCount}</div>
                         <div className="text-[10px] text-gray-400 uppercase tracking-wider">Critical</div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Bottom-left: Keyboard shortcut hints */}
+            <div className="absolute bottom-4 left-4 z-30">
+                <div className="bg-gray-900/90 backdrop-blur-xl border border-gray-700/50 rounded-xl p-3 shadow-2xl">
+                    <div className="flex items-center gap-1.5 mb-2">
+                        <Keyboard className="w-3 h-3 text-gray-400" />
+                        <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">Shortcuts</p>
+                    </div>
+                    <div className="space-y-1 text-[10px] text-gray-500">
+                        <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">Zoom in/out</span>
+                            <span className="font-mono bg-gray-800 px-1 rounded">+ / -</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">Pan</span>
+                            <span className="font-mono bg-gray-800 px-1 rounded">↑ ↓ ← →</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">Reset view</span>
+                            <span className="font-mono bg-gray-800 px-1 rounded">R</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">Deselect</span>
+                            <span className="font-mono bg-gray-800 px-1 rounded">Esc</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">Drag</span>
+                            <span className="text-gray-500">move nodes</span>
+                        </div>
                     </div>
                 </div>
             </div>

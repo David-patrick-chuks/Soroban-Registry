@@ -157,6 +157,48 @@ pub struct PublishRequest {
     pub dependencies: Vec<DependencyDeclaration>,
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Deprecation management (issue #65)
+// ────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DeprecationStatus {
+    Active,
+    Deprecated,
+    Retired,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeprecationInfo {
+    pub contract_id: String,
+    pub status: DeprecationStatus,
+    pub deprecated_at: Option<DateTime<Utc>>,
+    pub retirement_at: Option<DateTime<Utc>>,
+    pub replacement_contract_id: Option<String>,
+    pub migration_guide_url: Option<String>,
+    pub notes: Option<String>,
+    pub days_remaining: Option<i64>,
+    pub dependents_notified: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeprecateContractRequest {
+    pub retirement_at: DateTime<Utc>,
+    pub replacement_contract_id: Option<String>,
+    pub migration_guide_url: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct DeprecationNotification {
+    pub id: Uuid,
+    pub contract_id: Uuid,
+    pub deprecated_contract_id: Uuid,
+    pub message: String,
+    pub created_at: DateTime<Utc>,
+    pub acknowledged_at: Option<DateTime<Utc>>,
+}
 /// Dependency declaration in publish request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DependencyDeclaration {

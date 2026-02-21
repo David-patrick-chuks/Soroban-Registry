@@ -13,6 +13,7 @@ mod metrics;
 // mod resource_tracking;
 mod analytics;
 mod custom_metrics_handlers;
+mod deprecation_handlers;
 
 use anyhow::Result;
 use axum::{middleware, Router};

@@ -20,6 +20,7 @@ import FormalVerificationPanel from "@/components/FormalVerificationPanel";
 import Navbar from "@/components/Navbar";
 import MaintenanceBanner from "@/components/MaintenanceBanner";
 import { useQueryClient } from "@tanstack/react-query";
+import CustomMetricsPanel from "@/components/CustomMetricsPanel";
 
 // Mock for maintenance status since it was missing in the original file view but used in code
 const maintenanceStatus = { is_maintenance: false, current_window: null };
@@ -150,6 +151,9 @@ function ContractDetailsContent() {
           <section>
             <ExampleGallery contractId={contract.id} />
           </section>
+
+          {/* Custom Metrics */}
+          <CustomMetricsPanel contractId={contract.id} />
         </div>
 
         {/* Sidebar */}

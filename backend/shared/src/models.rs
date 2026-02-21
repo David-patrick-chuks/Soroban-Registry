@@ -687,6 +687,65 @@ pub struct CreateAlertConfigRequest {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+// Custom contract metrics (issue #89)
+// ────────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "custom_metric_type", rename_all = "snake_case")]
+pub enum CustomMetricType {
+    Counter,
+    Gauge,
+    Histogram,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CustomMetric {
+    pub id: Uuid,
+    pub contract_id: String,
+    pub metric_name: String,
+    pub metric_type: CustomMetricType,
+    pub value: Decimal,
+    pub unit: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub ledger_sequence: Option<i64>,
+    pub transaction_hash: Option<String>,
+    pub timestamp: DateTime<Utc>,
+    pub network: Network,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordCustomMetricRequest {
+    pub contract_id: String,
+    pub metric_name: String,
+    pub metric_type: CustomMetricType,
+    pub value: f64,
+    pub unit: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+    pub ledger_sequence: Option<i64>,
+    pub transaction_hash: Option<String>,
+    pub timestamp: Option<DateTime<Utc>>,
+    pub network: Option<Network>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CustomMetricAggregate {
+    pub contract_id: String,
+    pub metric_name: String,
+    pub metric_type: CustomMetricType,
+    pub bucket_start: DateTime<Utc>,
+    pub bucket_end: DateTime<Utc>,
+    pub sample_count: i32,
+    pub sum_value: Option<Decimal>,
+    pub avg_value: Option<Decimal>,
+    pub min_value: Option<Decimal>,
+    pub max_value: Option<Decimal>,
+    pub p50_value: Option<Decimal>,
+    pub p95_value: Option<Decimal>,
+    pub p99_value: Option<Decimal>,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 // Analytics models
 // ────────────────────────────────────────────────────────────────────────────
 

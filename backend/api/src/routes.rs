@@ -4,7 +4,7 @@ use axum::{
 };
 
 use crate::{
-    handlers, metrics_handler,
+    handlers, metrics_handler, custom_metrics_handlers,
     state::AppState,
 };
 
@@ -30,6 +30,19 @@ pub fn contract_routes() -> Router<AppState> {
         .route(
             "/api/contracts/:id/performance",
             get(handlers::get_contract_performance),
+        )
+        .route(
+            "/api/contracts/:id/metrics",
+            get(custom_metrics_handlers::get_contract_metrics)
+                .post(custom_metrics_handlers::record_contract_metric),
+        )
+        .route(
+            "/api/contracts/:id/metrics/batch",
+            post(custom_metrics_handlers::record_metrics_batch),
+        )
+        .route(
+            "/api/contracts/:id/metrics/catalog",
+            get(custom_metrics_handlers::get_metric_catalog),
         )
         // .route(
         //     "/api/contracts/:id/compatibility",

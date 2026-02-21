@@ -107,6 +107,44 @@ export interface PublishRequest {
   publisher_address: string;
 }
 
+export type CustomMetricType = 'counter' | 'gauge' | 'histogram';
+
+export interface MetricCatalogEntry {
+  metric_name: string;
+  metric_type: CustomMetricType;
+  last_seen: string;
+  sample_count: number;
+}
+
+export interface MetricSeriesPoint {
+  bucket_start: string;
+  bucket_end: string;
+  sample_count: number;
+  sum_value?: number;
+  avg_value?: number;
+  min_value?: number;
+  max_value?: number;
+  p50_value?: number;
+  p95_value?: number;
+  p99_value?: number;
+}
+
+export interface MetricSample {
+  timestamp: string;
+  value: number;
+  unit?: string;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface MetricSeriesResponse {
+  contract_id: string;
+  metric_name: string;
+  metric_type: CustomMetricType;
+  resolution: 'hour' | 'day' | 'raw';
+  points?: MetricSeriesPoint[];
+  samples?: MetricSample[];
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 
@@ -362,6 +400,73 @@ export const api = {
       body: JSON.stringify(data),
     });
     if (!response.ok) throw new Error('Failed to run formal verification');
+    return response.json();
+  },
+
+  async getCustomMetricCatalog(id: string): Promise<MetricCatalogEntry[]> {
+    if (USE_MOCKS) {
+      return Promise.resolve([
+        {
+          metric_name: 'custom_trades_volume',
+          metric_type: 'counter',
+          last_seen: new Date().toISOString(),
+          sample_count: 128,
+        },
+        {
+          metric_name: 'custom_liquidity_depth',
+          metric_type: 'gauge',
+          last_seen: new Date().toISOString(),
+          sample_count: 72,
+        },
+      ]);
+    }
+
+    const response = await fetch(`${API_URL}/api/contracts/${id}/metrics/catalog`);
+    if (!response.ok) throw new Error('Failed to fetch metrics catalog');
+    return response.json();
+  },
+
+  async getCustomMetricSeries(
+    id: string,
+    metric: string,
+    options?: { resolution?: 'hour' | 'day' | 'raw'; from?: string; to?: string; limit?: number },
+  ): Promise<MetricSeriesResponse> {
+    if (USE_MOCKS) {
+      const now = Date.now();
+      const points = Array.from({ length: 24 }).map((_, idx) => {
+        const bucketStart = new Date(now - (23 - idx) * 3600_000).toISOString();
+        const bucketEnd = new Date(now - (22 - idx) * 3600_000).toISOString();
+        return {
+          bucket_start: bucketStart,
+          bucket_end: bucketEnd,
+          sample_count: 12,
+          avg_value: Math.random() * 1000,
+          p95_value: Math.random() * 1200,
+          max_value: Math.random() * 1500,
+          sum_value: Math.random() * 5000,
+        } satisfies MetricSeriesPoint;
+      });
+
+      return Promise.resolve({
+        contract_id: id,
+        metric_name: metric,
+        metric_type: 'counter',
+        resolution: options?.resolution ?? 'hour',
+        points,
+      });
+    }
+
+    const queryParams = new URLSearchParams();
+    queryParams.append('metric', metric);
+    if (options?.resolution) queryParams.append('resolution', options.resolution);
+    if (options?.from) queryParams.append('from', options.from);
+    if (options?.to) queryParams.append('to', options.to);
+    if (options?.limit) queryParams.append('limit', String(options.limit));
+
+    const response = await fetch(
+      `${API_URL}/api/contracts/${id}/metrics?${queryParams.toString()}`,
+    );
+    if (!response.ok) throw new Error('Failed to fetch metric series');
     return response.json();
   },
 

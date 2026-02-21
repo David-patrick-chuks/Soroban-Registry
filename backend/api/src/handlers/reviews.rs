@@ -36,7 +36,7 @@ pub async fn create_review(
     Ok((StatusCode::CREATED, Json(review)))
 }
 
-/// GET /api/contracts/:id/reviews
+///Endpoint: GET /api/contracts/:id/reviews
 pub async fn get_reviews(
     State(pool): State<PgPool>,
     Path(contract_id): Path<Uuid>,

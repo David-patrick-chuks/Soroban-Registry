@@ -303,6 +303,12 @@ pub async fn create_contract_version(
         }
     }
 
+    let mut tx = state
+        .db
+        .begin()
+        .await
+        .map_err(|err| db_internal_error("begin transaction", err))?;
+
     let version_row: ContractVersion = sqlx::query_as(
         "INSERT INTO contract_versions (contract_id, version, wasm_hash, source_url, commit_hash, release_notes) \
          VALUES ($1, $2, $3, $4, $5, $6) \
@@ -314,7 +320,7 @@ pub async fn create_contract_version(
     .bind(&req.source_url)
     .bind(&req.commit_hash)
     .bind(&req.release_notes)
-    .fetch_one(&state.db)
+    .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
         sqlx::Error::Database(db_err)
@@ -328,16 +334,20 @@ pub async fn create_contract_version(
         _ => db_internal_error("insert contract version", err),
     })?;
 
-    let _ = sqlx::query(
+    sqlx::query(
         "INSERT INTO contract_abis (contract_id, version, abi) VALUES ($1, $2, $3) \
          ON CONFLICT (contract_id, version) DO UPDATE SET abi = EXCLUDED.abi",
     )
     .bind(contract_uuid)
     .bind(&req.version)
     .bind(&req.abi)
-    .execute(&state.db)
+    .execute(&mut *tx)
     .await
     .map_err(|err| db_internal_error("insert contract abi", err))?;
+
+    tx.commit()
+        .await
+        .map_err(|err| db_internal_error("commit contract version", err))?;
 
     Ok(Json(version_row))
 }

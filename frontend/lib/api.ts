@@ -229,7 +229,16 @@ export const api = {
       queryParams.append("language", language),
     );
     if (params?.author) queryParams.append("author", params.author);
-    if (params?.sort_by) queryParams.append("sort_by", params.sort_by);
+    // Backend expects sort_by without underscores: createdat, updatedat, popularity, deployments, interactions, relevance
+    if (params?.sort_by) {
+      const backendSortBy =
+        params.sort_by === 'created_at' ? 'createdat'
+        : params.sort_by === 'updated_at' ? 'updatedat'
+        : params.sort_by === 'name' ? 'createdat'
+        : params.sort_by === 'downloads' ? 'interactions'
+        : params.sort_by;
+      queryParams.append("sort_by", backendSortBy);
+    }
     if (params?.sort_order) queryParams.append("sort_order", params.sort_order);
     if (params?.page) queryParams.append("page", String(params.page));
     if (params?.page_size)
@@ -237,7 +246,12 @@ export const api = {
 
     const response = await fetch(`${API_URL}/api/contracts?${queryParams}`);
     if (!response.ok) throw new Error("Failed to fetch contracts");
-    return response.json();
+    const data = await response.json();
+    // Backend returns "contracts"; normalize to "items" for PaginatedResponse
+    if (Array.isArray(data.contracts) && data.items === undefined) {
+      return { ...data, items: data.contracts };
+    }
+    return data;
   },
 
   async getContract(id: string): Promise<Contract> {
@@ -432,7 +446,7 @@ export const api = {
     return `${API_URL}/api/contracts/${id}/compatibility/export?format=${format}`;
   },
 
-  // Graph endpoint
+  // Graph endpoint (backend may return { graph: {} } or { nodes, edges }; normalize to GraphResponse)
   async getContractGraph(network?: string): Promise<GraphResponse> {
     const queryParams = new URLSearchParams();
     if (network) queryParams.append("network", network);
@@ -440,7 +454,12 @@ export const api = {
 
     const response = await fetch(`${API_URL}/api/contracts/graph${qs ? `?${qs}` : ""}`);
     if (!response.ok) throw new Error("Failed to fetch contract graph");
-    return response.json();
+    const data = await response.json();
+    const raw = data?.graph ?? data;
+    return {
+      nodes: Array.isArray(raw?.nodes) ? raw.nodes : [],
+      edges: Array.isArray(raw?.edges) ? raw.edges : [],
+    };
   },
 
   async getTemplates(): Promise<Template[]> {

@@ -10,6 +10,7 @@ path = "src/main.rs"
 [dependencies]
 soroban-lint-core = { path = "../soroban-lint-core" }
 soroban-state-core = { path = "../soroban-state-core" }
+soroban-load-balancer = { path = "../soroban-load-balancer" }
 syn = { workspace = true }
 clap = { workspace = true }
 serde_json = { workspace = true }

@@ -21,6 +21,7 @@ import FormalVerificationPanel from "@/components/FormalVerificationPanel";
 import Navbar from "@/components/Navbar";
 import MaintenanceBanner from "@/components/MaintenanceBanner";
 import { useQueryClient } from "@tanstack/react-query";
+import DeprecationBanner from "@/components/DeprecationBanner";
 
 const NETWORKS: Network[] = ["mainnet", "testnet", "futurenet"];
 
@@ -48,6 +49,12 @@ function ContractDetailsContent() {
   const { data: dependencies, isLoading: depsLoading } = useQuery({
     queryKey: ["contract-dependencies", id],
     queryFn: () => api.getContractDependencies(id),
+    enabled: !!contract,
+  });
+
+  const { data: deprecationInfo } = useQuery({
+    queryKey: ["contract-deprecation", id],
+    queryFn: () => api.getDeprecationInfo(id),
     enabled: !!contract,
   });
 
@@ -91,6 +98,9 @@ function ContractDetailsContent() {
       {maintenanceStatus?.is_maintenance && maintenanceStatus.current_window && (
         <MaintenanceBanner window={maintenanceStatus.current_window} />
       )}
+
+      {/* Deprecation Banner */}
+      {deprecationInfo && <DeprecationBanner info={deprecationInfo} />}
 
       {/* Header */}
       <div className="mb-12">

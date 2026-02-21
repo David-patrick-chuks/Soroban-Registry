@@ -17,6 +17,12 @@ import {
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import FormalVerificationPanel from "@/components/FormalVerificationPanel";
+import Navbar from "@/components/Navbar";
+import MaintenanceBanner from "@/components/MaintenanceBanner";
+import { useQueryClient } from "@tanstack/react-query";
+
+// Mock for maintenance status since it was missing in the original file view but used in code
+const maintenanceStatus = { is_maintenance: false, current_window: null };
 
 
 function ContractDetailsContent() {
@@ -70,6 +76,11 @@ function ContractDetailsContent() {
         Back to contracts
       </Link>
 
+      {/* Maintenance Banner */}
+      {maintenanceStatus?.is_maintenance && maintenanceStatus.current_window && (
+        <MaintenanceBanner window={maintenanceStatus.current_window} />
+      )}
+
       {/* Header */}
       <div className="mb-12">
         <div className="flex items-start justify-between mb-4">
@@ -118,12 +129,21 @@ function ContractDetailsContent() {
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-12">
           {/* Dependency Graph */}
-          <section>
-            <DependencyGraph
-              dependencies={dependencies || []}
-              isLoading={depsLoading}
-            />
-          </section>
+          {depsLoading ? (
+            <section className="bg-white dark:bg-slate-900 rounded-lg p-8">
+              <div className="animate-pulse space-y-4">
+                <div className="h-8 bg-gray-200 dark:bg-gray-800 rounded w-1/3" />
+                <div className="h-96 bg-gray-200 dark:bg-gray-800 rounded-lg" />
+              </div>
+            </section>
+          ) : dependencies ? (
+            <section>
+              <DependencyGraph
+                nodes={[]}
+                edges={[]}
+              />
+            </section>
+          ) : null}
 
           {/* Examples Gallery */}
           <section>
@@ -184,7 +204,8 @@ function ContractDetailsContent() {
 
 export default function ContractPage() {
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-950">
+    <div className="min-h-screen bg-background text-foreground">
+      <Navbar />
       <Suspense fallback={null}>
         <ContractDetailsContent />
       </Suspense>

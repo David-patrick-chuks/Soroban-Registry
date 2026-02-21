@@ -1,16 +1,21 @@
 mod commands;
+mod backup;
 mod config;
+mod events;
 mod export;
 mod fuzz;
 mod import;
+mod incident;
 mod manifest;
 mod multisig;
+mod package_signing;
 mod patch;
 mod profiler;
 mod sla;
 mod test_framework;
 mod wizard;
 mod formal_verification;
+mod coverage;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -174,6 +179,12 @@ pub enum Commands {
         action: PatchCommands,
     },
 
+    /// Incident response management
+    Incident {
+        #[command(subcommand)]
+        action: IncidentCommands,
+    },
+
     /// Multi-signature contract deployment workflow
     Multisig {
         #[command(subcommand)]
@@ -282,6 +293,70 @@ pub enum Commands {
         dependencies: String,
         #[arg(long, default_value_t = false)]
         fail_on_high: bool,
+    },
+
+    /// Measure and report code coverage for contract tests
+    Coverage {
+        /// Path to contract directory
+        contract_path: String,
+
+        /// Path to test directory or file
+        #[arg(long)]
+        tests: String,
+
+        /// Fail if coverage is below this threshold (0-100)
+        #[arg(long, default_value_t = 0.0)]
+        threshold: f64,
+
+        /// Output directory for HTML reports
+        #[arg(long, default_value = "coverage_report")]
+        output: String,
+    },
+
+    /// Sign a contract package with your private key
+    Sign {
+        /// Path to the package file to sign
+        package: String,
+
+        /// Private key (base64-encoded Ed25519)
+        #[arg(long)]
+        private_key: String,
+
+        /// Contract ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Package version
+        #[arg(long)]
+        version: String,
+
+        /// Signature expiration (RFC3339 format)
+        #[arg(long)]
+        expires_at: Option<String>,
+    },
+
+    /// Verify a signed contract package
+    Verify {
+        /// Path to the package file to verify
+        package: String,
+
+        /// Contract ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Package version (optional)
+        #[arg(long)]
+        version: Option<String>,
+
+        /// Signature (base64, optional - will lookup from registry if not provided)
+        #[arg(long)]
+        signature: Option<String>,
+    },
+
+    /// Manage signing keys and signatures
+    Keys {
+        #[command(subcommand)]
+        action: KeysCommands,
     },
 }
 
@@ -446,6 +521,27 @@ pub enum MultisigCommands {
     },
 }
 
+/// Sub-commands for the `incident` group
+#[derive(Debug, Subcommand)]
+pub enum IncidentCommands {
+    /// Trigger a new incident for a contract
+    Trigger {
+        /// On-chain contract ID
+        contract_id: String,
+        /// Incident severity (critical|high|medium|low)
+        #[arg(long)]
+        severity: String,
+    },
+    /// Update the state of an existing incident
+    Update {
+        /// Incident UUID returned by trigger
+        incident_id: String,
+        /// New state (detected|responding|contained|recovered|post_review)
+        #[arg(long)]
+        state: String,
+    },
+}
+
 /// Sub-commands for the `patch` group
 #[derive(Debug, Subcommand)]
 pub enum PatchCommands {
@@ -480,11 +576,49 @@ pub enum PatchCommands {
 }
 
 #[derive(Debug, Subcommand)]
+enum DepsCommands {
 pub enum DepsCommands {
     /// List dependencies for a contract
     List {
         /// Contract ID
         contract_id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum KeysCommands {
+    /// Generate a new Ed25519 keypair for signing
+    Generate {},
+
+    /// Revoke a signature
+    Revoke {
+        /// Signature ID to revoke
+        signature_id: String,
+        /// Address of the revoker
+        #[arg(long)]
+        revoked_by: String,
+        /// Reason for revocation
+        #[arg(long)]
+        reason: String,
+    },
+
+    /// Show chain of custody for a contract
+    Custody {
+        /// Contract ID
+        contract_id: String,
+    },
+
+    /// View transparency log
+    Log {
+        /// Filter by contract ID
+        #[arg(long)]
+        contract_id: Option<String>,
+        /// Filter by entry type
+        #[arg(long)]
+        entry_type: Option<String>,
+        /// Maximum entries to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
     },
 }
 
@@ -565,6 +699,16 @@ async fn main() -> Result<()> {
             log::debug!("Command: history | search={:?} limit={}", search, limit);
             wizard::show_history(search.as_deref(), limit)?;
         }
+        Commands::Incident { action } => match action {
+            IncidentCommands::Trigger { contract_id, severity } => {
+                log::debug!("Command: incident trigger | contract_id={} severity={}", contract_id, severity);
+                commands::incident_trigger(&contract_id, &severity)?;
+            }
+            IncidentCommands::Update { incident_id, state } => {
+                log::debug!("Command: incident update | incident_id={} state={}", incident_id, state);
+                commands::incident_update(&incident_id, &state)?;
+            }
+        },
         Commands::Patch { action } => match action {
             PatchCommands::Create { version, hash, severity, rollout } => {
                 let sev = severity.parse::<Severity>()?;
@@ -583,6 +727,7 @@ async fn main() -> Result<()> {
                 DepsCommands::List { contract_id } => {
                     commands::deps_list(&cli.api_url, &contract_id).await?;
                 }
+            },
             }
         },
         // ── Multi-sig commands (issue #47) ───────────────────────────────────
@@ -721,6 +866,64 @@ async fn main() -> Result<()> {
         },
         Commands::ScanDeps { contract_id, dependencies, fail_on_high } => {
             commands::scan_deps(&cli.api_url, &contract_id, &dependencies, fail_on_high).await?;
+        }
+        Commands::Coverage { contract_path, tests, threshold, output } => {
+            coverage::run(&contract_path, &tests, threshold, &output).await?;
+        }
+        Commands::Sign { package, private_key, contract_id, version, expires_at } => {
+            log::debug!(
+                "Command: sign | package={} contract_id={} version={}",
+                package, contract_id, version
+            );
+            package_signing::sign_package(
+                &cli.api_url,
+                &package,
+                &private_key,
+                &contract_id,
+                &version,
+                expires_at.as_deref(),
+            ).await?;
+        }
+        Commands::Verify { package, contract_id, version, signature } => {
+            log::debug!(
+                "Command: verify | package={} contract_id={}",
+                package, contract_id
+            );
+            package_signing::verify_package(
+                &cli.api_url,
+                &package,
+                &contract_id,
+                version.as_deref(),
+                signature.as_deref(),
+            ).await?;
+        }
+        Commands::Keys { action } => match action {
+            KeysCommands::Generate {} => {
+                log::debug!("Command: keys generate");
+                package_signing::generate_keypair()?;
+            }
+            KeysCommands::Revoke { signature_id, revoked_by, reason } => {
+                log::debug!("Command: keys revoke | signature_id={}", signature_id);
+                package_signing::revoke_signature(
+                    &cli.api_url,
+                    &signature_id,
+                    &revoked_by,
+                    &reason,
+                ).await?;
+            }
+            KeysCommands::Custody { contract_id } => {
+                log::debug!("Command: keys custody | contract_id={}", contract_id);
+                package_signing::get_chain_of_custody(&cli.api_url, &contract_id).await?;
+            }
+            KeysCommands::Log { contract_id, entry_type, limit } => {
+                log::debug!("Command: keys log");
+                package_signing::get_transparency_log(
+                    &cli.api_url,
+                    contract_id.as_deref(),
+                    entry_type.as_deref(),
+                    *limit,
+                ).await?;
+            }
         }
     }
 

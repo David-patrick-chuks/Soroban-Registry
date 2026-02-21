@@ -89,7 +89,11 @@ fn test_grouped_source_versions_are_sorted() {
     let grouped = group_by_source(&rows);
     let keys: Vec<&String> = grouped.keys().collect();
 
-    assert_eq!(keys, vec!["1.0.0", "2.0.0", "3.0.0"], "Keys should be in alphabetical/BTree order");
+    assert_eq!(
+        keys,
+        vec!["1.0.0", "2.0.0", "3.0.0"],
+        "Keys should be in alphabetical/BTree order"
+    );
 }
 
 #[test]
@@ -101,7 +105,10 @@ fn test_no_warnings_when_all_compatible() {
     ];
 
     let warnings = collect_warnings(&rows);
-    assert!(warnings.is_empty(), "Expected no warnings for all-compatible rows");
+    assert!(
+        warnings.is_empty(),
+        "Expected no warnings for all-compatible rows"
+    );
 }
 
 #[test]
@@ -166,10 +173,7 @@ fn test_csv_row_format() {
         is_compatible
     );
 
-    assert_eq!(
-        csv_row,
-        "1.2.3,GABC...XYZ,oracle-contract,4.0.0,20.0,true"
-    );
+    assert_eq!(csv_row, "1.2.3,GABC...XYZ,oracle-contract,4.0.0,20.0,true");
 }
 
 #[test]
@@ -184,7 +188,13 @@ fn test_csv_row_with_no_stellar_version() {
 
 #[test]
 fn test_single_entry_matrix() {
-    let rows = vec![make_row("1.0.0", "only-contract", "1.0.0", true, Some("20.0"))];
+    let rows = vec![make_row(
+        "1.0.0",
+        "only-contract",
+        "1.0.0",
+        true,
+        Some("20.0"),
+    )];
 
     let grouped = group_by_source(&rows);
     let warnings = collect_warnings(&rows);
@@ -192,8 +202,5 @@ fn test_single_entry_matrix() {
     assert_eq!(grouped.len(), 1);
     assert_eq!(grouped["1.0.0"].len(), 1);
     assert!(warnings.is_empty());
-    assert_eq!(
-        grouped["1.0.0"][0].stellar_version.as_deref(),
-        Some("20.0")
-    );
+    assert_eq!(grouped["1.0.0"][0].stellar_version.as_deref(), Some("20.0"));
 }

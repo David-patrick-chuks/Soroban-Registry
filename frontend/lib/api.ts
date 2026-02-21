@@ -20,6 +20,7 @@ export interface Contract {
   downloads?: number;
   created_at: string;
   updated_at: string;
+  is_maintenance?: boolean;
 }
 
 export interface ContractHealth {
@@ -70,6 +71,13 @@ export interface DependencyTreeNode {
   dependencies: DependencyTreeNode[];
 }
 
+export interface MaintenanceWindow {
+  message: string;
+  scheduled_end_at?: string;
+}
+
+export type MaturityLevel = 'alpha' | 'beta' | 'stable' | 'mature' | 'legacy';
+
 export interface ContractSearchParams {
   query?: string;
   network?: "mainnet" | "testnet" | "futurenet";
@@ -83,6 +91,7 @@ export interface ContractSearchParams {
   sort_by?: "name" | "created_at" | "popularity" | "downloads";
   sort_order?: "asc" | "desc";
   tags?: string[];
+  maturity?: 'alpha' | 'beta' | 'stable' | 'mature' | 'legacy';
   page?: number;
   page_size?: number;
 }
@@ -329,7 +338,7 @@ export const api = {
   },
 
   async getContractHealth(id: string): Promise<ContractHealth> {
-    const response = await fetch(apiUrl(`/api/contracts/${id}/health`));
+    const response = await fetch(`${API_URL}/api/contracts/${id}/health`);
     if (!response.ok) throw new Error("Failed to fetch contract health");
     return response.json();
   },
@@ -428,10 +437,19 @@ export const api = {
     const queryParams = new URLSearchParams();
     if (network) queryParams.append("network", network);
     const qs = queryParams.toString();
-    const response = await fetch(
-      apiUrl(`/api/contracts/graph${qs ? `?${qs}` : ""}`),
-    );
+
+    const response = await fetch(`${API_URL}/api/contracts/graph${qs ? `?${qs}` : ""}`);
     if (!response.ok) throw new Error("Failed to fetch contract graph");
+    return response.json();
+  },
+
+  async getTemplates(): Promise<Template[]> {
+    if (USE_MOCKS) {
+      return Promise.resolve([]);
+    }
+    const response = await fetch(`${API_URL}/api/templates`);
+    if (!response.ok) throw new Error('Failed to fetch templates');
+
     return response.json();
   },
 };

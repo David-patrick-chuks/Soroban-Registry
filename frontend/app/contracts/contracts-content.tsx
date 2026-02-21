@@ -91,9 +91,9 @@ function getInitialFilters(searchParams: URLSearchParams): ContractsUiFilters {
     verified_only: searchParams.get('verified_only') === 'true',
     sort_by:
       sortBy === 'name' ||
-      sortBy === 'created_at' ||
-      sortBy === 'popularity' ||
-      sortBy === 'downloads'
+        sortBy === 'created_at' ||
+        sortBy === 'popularity' ||
+        sortBy === 'downloads'
         ? sortBy
         : 'created_at',
     page: Number.isFinite(parsedPage) && parsedPage > 0 ? parsedPage : 1,
@@ -285,15 +285,15 @@ export function ContractsContent() {
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
       <div className="mb-8">
-        <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2">
+        <h1 className="text-4xl font-bold mb-2">
           Browse Contracts
         </h1>
-        <p className="text-gray-600 dark:text-gray-400">
+        <p className="text-muted-foreground">
           Discover verified Soroban smart contracts on the Stellar network
         </p>
       </div>
 
-      <div className="bg-white dark:bg-gray-900 rounded-xl border border-gray-200 dark:border-gray-800 p-6 mb-8">
+      <div className="bg-background rounded-xl border border-border p-6 mb-8 shadow-sm">
         <div className="flex flex-col gap-4">
           <SearchBar
             value={filters.query}
@@ -311,17 +311,17 @@ export function ContractsContent() {
             <button
               type="button"
               onClick={() => setMobileFiltersOpen(true)}
-              className="md:hidden inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-700 text-sm text-gray-700 dark:text-gray-300"
+              className="md:hidden inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm text-foreground hover:bg-accent transition-colors"
             >
               <SlidersHorizontal className="w-4 h-4" />
               Filters
             </button>
-            <div className="hidden md:flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+            <div className="hidden md:flex items-center gap-2 text-sm text-muted-foreground">
               <Filter className="w-4 h-4" />
               Advanced filters
             </div>
             {isFetching && !isLoading && (
-              <span className="text-xs text-gray-500 dark:text-gray-400">
+              <span className="text-xs text-muted-foreground">
                 Updating results...
               </span>
             )}
@@ -330,20 +330,20 @@ export function ContractsContent() {
           <ActiveFilters chips={activeFilterChips} onClearAll={clearAllFilters} />
         </div>
 
-        <div className="hidden md:block mt-6 border-t border-gray-200 dark:border-gray-800 pt-6">
+        <div className="hidden md:block mt-6 border-t border-border pt-6">
           {filterPanel}
         </div>
       </div>
 
       {mobileFiltersOpen && (
-        <div className="md:hidden fixed inset-0 z-50 bg-black/40">
-          <div className="absolute right-0 top-0 h-full w-[88%] max-w-sm bg-white dark:bg-gray-900 border-l border-gray-200 dark:border-gray-800 p-5 overflow-y-auto">
+        <div className="md:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm">
+          <div className="absolute right-0 top-0 h-full w-[88%] max-w-sm bg-background border-l border-border p-5 shadow-2xl animate-in slide-in-from-right duration-300">
             <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Filters</h2>
+              <h2 className="text-lg font-semibold">Filters</h2>
               <button
                 type="button"
                 onClick={() => setMobileFiltersOpen(false)}
-                className="p-1 rounded-md text-gray-500 hover:text-gray-700 dark:hover:text-gray-300"
+                className="p-1 rounded-md text-muted-foreground hover:text-foreground transition-colors"
                 aria-label="Close filters"
               >
                 <X className="w-5 h-5" />
@@ -353,7 +353,7 @@ export function ContractsContent() {
             <button
               type="button"
               onClick={() => setMobileFiltersOpen(false)}
-              className="mt-6 w-full px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700"
+              className="mt-6 w-full px-4 py-2 rounded-lg bg-primary text-primary-foreground hover:opacity-90 transition-opacity font-medium"
             >
               Show results
             </button>

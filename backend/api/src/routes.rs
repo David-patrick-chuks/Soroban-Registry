@@ -4,7 +4,7 @@ use axum::{
 };
 
 use crate::{
-    handlers, metrics_handler,
+    handlers, metrics_handler, deprecation_handlers,
     state::AppState,
 };
 
@@ -21,6 +21,8 @@ pub fn contract_routes() -> Router<AppState> {
         .route("/api/contracts/:id", get(handlers::get_contract))
         .route("/api/contracts/:id/abi", get(handlers::get_contract_abi))
         .route("/api/contracts/:id/versions", get(handlers::get_contract_versions))
+        .route("/api/contracts/:id/deprecation-info", get(deprecation_handlers::get_deprecation_info))
+        .route("/api/contracts/:id/deprecate", post(deprecation_handlers::deprecate_contract))
         .route("/api/contracts/:id/state/:key", get(handlers::get_contract_state).post(handlers::update_contract_state))
         .route("/api/contracts/:id/analytics", get(handlers::get_contract_analytics))
         .route("/api/contracts/:id/trust-score", get(handlers::get_trust_score))

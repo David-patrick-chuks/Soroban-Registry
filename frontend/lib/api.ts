@@ -107,6 +107,20 @@ export interface PublishRequest {
   publisher_address: string;
 }
 
+export type DeprecationStatus = 'active' | 'deprecated' | 'retired';
+
+export interface DeprecationInfo {
+  contract_id: string;
+  status: DeprecationStatus;
+  deprecated_at?: string | null;
+  retirement_at?: string | null;
+  replacement_contract_id?: string | null;
+  migration_guide_url?: string | null;
+  notes?: string | null;
+  days_remaining?: number | null;
+  dependents_notified: number;
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 const USE_MOCKS = process.env.NEXT_PUBLIC_USE_MOCKS === "true";
 
@@ -340,6 +354,26 @@ export const api = {
   async getContractHealth(id: string): Promise<ContractHealth> {
     const response = await fetch(`${API_URL}/api/contracts/${id}/health`);
     if (!response.ok) throw new Error("Failed to fetch contract health");
+    return response.json();
+  },
+
+  async getDeprecationInfo(id: string): Promise<DeprecationInfo> {
+    if (USE_MOCKS) {
+      return Promise.resolve({
+        contract_id: id,
+        status: 'deprecated',
+        deprecated_at: new Date(Date.now() - 86400000 * 7).toISOString(),
+        retirement_at: new Date(Date.now() + 86400000 * 30).toISOString(),
+        replacement_contract_id: 'c2',
+        migration_guide_url: 'https://example.com/migration',
+        notes: 'This contract is being retired. Migrate to the new liquidity pool contract.',
+        days_remaining: 30,
+        dependents_notified: 4,
+      });
+    }
+
+    const response = await fetch(`${API_URL}/api/contracts/${id}/deprecation-info`);
+    if (!response.ok) throw new Error('Failed to fetch deprecation info');
     return response.json();
   },
 

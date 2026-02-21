@@ -25,6 +25,8 @@ pub struct Contract {
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub is_maintenance: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upgrade_strategy: Option<UpgradeStrategy>,
 }
 
 /// Network where the contract is deployed
@@ -45,6 +47,17 @@ impl std::fmt::Display for Network {
             Network::Futurenet => write!(f, "futurenet"),
         }
     }
+}
+
+/// Upgrade strategy for contract upgrades
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "upgrade_strategy_type", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum UpgradeStrategy {
+    Proxy,
+    Uups,
+    DataMigration,
+    ShadowContract,
 }
 
 /// Contract version information

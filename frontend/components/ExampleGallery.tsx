@@ -5,6 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import ExampleCard from './ExampleCard';
 import { AlertCircle, Terminal, Search } from 'lucide-react';
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { useEffect } from 'react';
 
 interface ExampleGalleryProps {
   contractId: string;
@@ -15,9 +17,19 @@ export default function ExampleGallery({ contractId }: ExampleGalleryProps) {
     queryKey: ['contract-examples', contractId],
     queryFn: () => api.getContractExamples(contractId),
   });
+  const { logEvent } = useAnalytics();
 
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+
+  useEffect(() => {
+    if (!error) return;
+    logEvent('error_event', {
+      source: 'example_gallery',
+      contract_id: contractId,
+      message: 'Failed to load examples',
+    });
+  }, [error, contractId, logEvent]);
 
   if (isLoading) {
     return <div className="animate-pulse h-64 bg-gray-100 dark:bg-gray-800 rounded-xl" />;

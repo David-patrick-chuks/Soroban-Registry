@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { useAnalytics } from "@/hooks/useAnalytics";
+import { useEffect } from "react";
 
 function ContractDetailsContent() {
   const params = useParams();
@@ -34,6 +36,16 @@ function ContractDetailsContent() {
     queryFn: () => api.getContractDependencies(id),
     enabled: !!contract,
   });
+  const { logEvent } = useAnalytics();
+
+  useEffect(() => {
+    if (!error) return;
+    logEvent("error_event", {
+      source: "contract_details",
+      contract_id: id,
+      message: "Failed to load contract details",
+    });
+  }, [error, id, logEvent]);
 
   if (isLoading) {
     return (

@@ -7,6 +7,7 @@ import type { DependencyGraphHandle } from '@/components/DependencyGraph';
 import GraphControls from '@/components/GraphControls';
 import { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import { AlertCircle, Sparkles } from 'lucide-react';
+import { useAnalytics } from '@/hooks/useAnalytics';
 
 // Generate synthetic demo data for testing at scale
 function generateDemoData(nodeCount: number): { nodes: GraphNode[]; edges: GraphEdge[] } {
@@ -67,12 +68,32 @@ export function GraphContent() {
     const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
     const [searchMatchIndex, setSearchMatchIndex] = useState(0);
     const graphRef = useRef<DependencyGraphHandle | null>(null);
+    const { logEvent } = useAnalytics();
 
     const { data: apiData, isLoading, error } = useQuery({
         queryKey: ['contract-graph', networkFilter],
         queryFn: () => api.getContractGraph(networkFilter || undefined),
         enabled: !demoMode,
     });
+
+    useEffect(() => {
+        if (!error) return;
+        logEvent('error_event', {
+            source: 'graph_page',
+            message: 'Failed to load contract graph data',
+            network_filter: networkFilter || 'all',
+        });
+    }, [error, networkFilter, logEvent]);
+
+    useEffect(() => {
+        if (!searchQuery.trim()) return;
+        logEvent('search_performed', {
+            keyword: searchQuery.trim(),
+            source: 'graph_page',
+            network_filter: networkFilter || 'all',
+            demo_mode: demoMode,
+        });
+    }, [searchQuery, networkFilter, demoMode, logEvent]);
 
     const demoData = useMemo(
         () => (demoMode ? generateDemoData(demoNodeCount) : null),

@@ -6,9 +6,11 @@ import ContractCard from '@/components/ContractCard';
 import { Search, Package, CheckCircle, Users, ArrowRight, Sparkles, GitBranch } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { useAnalytics } from '@/hooks/useAnalytics';
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
+  const { logEvent } = useAnalytics();
 
   const { data: stats } = useQuery({
     queryKey: ['stats'],
@@ -23,6 +25,10 @@ export default function Home() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
+      logEvent('search_performed', {
+        keyword: searchQuery.trim(),
+        source: 'home_hero',
+      });
       window.location.href = `/contracts?query=${encodeURIComponent(searchQuery)}`;
     }
   };
@@ -55,6 +61,7 @@ export default function Home() {
               </Link>
               <Link
                 href="/publish"
+                onClick={() => logEvent('publish_cta_clicked', { source: 'home_nav' })}
                 className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
               >
                 Publish Contract

@@ -5,12 +5,23 @@ import { api } from '@/lib/api';
 import TemplateGallery from '@/components/TemplateGallery';
 import { Package, Sparkles, Terminal } from 'lucide-react';
 import Link from 'next/link';
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { useEffect } from 'react';
 
 export default function TemplatesPage() {
-    const { data: templates, isLoading } = useQuery({
+    const { data: templates, isLoading, error } = useQuery({
         queryKey: ['templates'],
         queryFn: () => api.getTemplates(),
     });
+    const { logEvent } = useAnalytics();
+
+    useEffect(() => {
+        if (!error) return;
+        logEvent('error_event', {
+            source: 'templates_page',
+            message: 'Failed to load templates',
+        });
+    }, [error, logEvent]);
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/30 dark:from-gray-950 dark:via-blue-950/20 dark:to-purple-950/20">
@@ -26,7 +37,11 @@ export default function TemplatesPage() {
                         <div className="flex items-center gap-4">
                             <Link href="/contracts" className="text-gray-600 dark:text-gray-300 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">Browse</Link>
                             <Link href="/templates" className="text-blue-600 dark:text-blue-400 font-medium">Templates</Link>
-                            <Link href="/publish" className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium">
+                            <Link
+                                href="/publish"
+                                onClick={() => logEvent('publish_cta_clicked', { source: 'templates_nav' })}
+                                className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 transition-colors font-medium"
+                            >
                                 Publish Contract
                             </Link>
                         </div>

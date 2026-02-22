@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Network } from "@/lib/api";
@@ -9,22 +9,17 @@ import DependencyGraph from "@/components/DependencyGraph";
 import {
   ArrowLeft,
   CheckCircle2,
-  Clock,
   Globe,
-  Github,
   Tag,
   GitCompare,
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import { useAnalytics } from "@/hooks/useAnalytics";
-import { useEffect } from "react";
 import { useParams, useSearchParams } from "next/navigation";
+import { useAnalytics } from "@/hooks/useAnalytics";
 import FormalVerificationPanel from "@/components/FormalVerificationPanel";
 import InteractionHistorySection from "@/components/InteractionHistorySection";
 import Navbar from "@/components/Navbar";
 import MaintenanceBanner from "@/components/MaintenanceBanner";
-import { useQueryClient } from "@tanstack/react-query";
 import CustomMetricsPanel from "@/components/CustomMetricsPanel";
 import DeprecationBanner from "@/components/DeprecationBanner";
 
@@ -206,13 +201,10 @@ function ContractDetailsContent() {
             <ExampleGallery contractId={contract.id} />
           </section>
 
-<<<<<<< feature/issue-46-add-contract-interaction-history-tracking
           {/* Interaction History (Issue #46) */}
           <InteractionHistorySection contractId={contract.id} />
-=======
           {/* Custom Metrics */}
           <CustomMetricsPanel contractId={contract.id} />
->>>>>>> main
         </div>
 
         {/* Sidebar */}

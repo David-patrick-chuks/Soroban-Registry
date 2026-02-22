@@ -2,7 +2,6 @@ import {
   MOCK_CONTRACTS,
   MOCK_EXAMPLES,
   MOCK_VERSIONS,
-  MOCK_TEMPLATES,
 } from "./mock-data";
 import { trackEvent } from "./analytics";
 import {
@@ -820,22 +819,10 @@ export const api = {
     const queryParams = new URLSearchParams();
     if (network) queryParams.append("network", network);
     const qs = queryParams.toString();
-    const response = await fetch(
-      `${API_URL}/api/contracts/graph${qs ? `?${qs}` : ""}`,
-    );
-
     return handleApiCall<GraphResponse>(
       () => fetch(`${API_URL}/api/contracts/graph${qs ? `?${qs}` : ""}`),
       '/api/contracts/graph'
     );
-    const response = await fetch(`${API_URL}/api/contracts/graph${qs ? `?${qs}` : ""}`);
-    if (!response.ok) throw new Error("Failed to fetch contract graph");
-    const data = await response.json();
-    const raw = data?.graph ?? data;
-    return {
-      nodes: Array.isArray(raw?.nodes) ? raw.nodes : [],
-      edges: Array.isArray(raw?.edges) ? raw.edges : [],
-    };
   },
 
   async getTemplates(): Promise<Template[]> {

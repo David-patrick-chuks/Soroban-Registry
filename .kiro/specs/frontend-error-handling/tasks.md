@@ -87,7 +87,7 @@
   - Test graceful error handling
   - _Requirements: 5.5_
 
-- [ ] 5. Integrate error handling into application layout
+- [x] 5. Integrate error handling into application layout
   - Update `frontend/app/layout.tsx` to wrap children in ErrorBoundary
   - Add ToastProvider to provider hierarchy
   - Ensure proper provider ordering

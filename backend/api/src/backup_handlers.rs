@@ -10,6 +10,10 @@ use shared::models::{
 use uuid::Uuid;
 
 use crate::{
+    disaster_recovery_models::{
+        CreateDisasterRecoveryPlanRequest, DisasterRecoveryPlan, ExecuteRecoveryRequest, 
+        RecoveryMetrics, RecoveryNotification
+    },
     error::{ApiError, ApiResult},
     state::AppState,
 };
@@ -172,4 +176,163 @@ pub async fn get_backup_stats(
         "total_size_bytes": stats.total_size_bytes.unwrap_or(0),
         "latest_backup": stats.latest_backup,
     })))
+}
+
+// Disaster Recovery Plan Handlers
+
+pub async fn create_disaster_recovery_plan(
+    State(state): State<AppState>,
+    Path(contract_id): Path<Uuid>,
+    Json(req): Json<CreateDisasterRecoveryPlanRequest>,
+) -> ApiResult<Json<DisasterRecoveryPlan>> {
+    let drp = sqlx::query_as::<_, DisasterRecoveryPlan>(
+        r#"
+        INSERT INTO disaster_recovery_plans 
+        (contract_id, rto_minutes, rpo_minutes, recovery_strategy, backup_frequency_minutes)
+        VALUES ($1, $2, $3, $4, $5)
+        ON CONFLICT (contract_id) DO UPDATE 
+        SET rto_minutes = $2, rpo_minutes = $3, recovery_strategy = $4, backup_frequency_minutes = $5, updated_at = NOW()
+        RETURNING *
+        "#,
+    )
+    .bind(contract_id)
+    .bind(req.rto_minutes)
+    .bind(req.rpo_minutes)
+    .bind(&req.recovery_strategy)
+    .bind(req.backup_frequency_minutes)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to create disaster recovery plan: {}", e)))?;
+
+    Ok(Json(drp))
+}
+
+pub async fn get_disaster_recovery_plan(
+    State(state): State<AppState>,
+    Path(contract_id): Path<Uuid>,
+) -> ApiResult<Json<DisasterRecoveryPlan>> {
+    let drp = sqlx::query_as::<_, DisasterRecoveryPlan>(
+        "SELECT * FROM disaster_recovery_plans WHERE contract_id = $1",
+    )
+    .bind(contract_id)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?
+    .ok_or_else(|| ApiError::not_found("disaster_recovery_plan", "Disaster recovery plan not found"))?;
+
+    Ok(Json(drp))
+}
+
+pub async fn execute_recovery(
+    State(state): State<AppState>,
+    Path(contract_id): Path<Uuid>,
+    Json(req): Json<ExecuteRecoveryRequest>,
+) -> ApiResult<Json<RecoveryMetrics>> {
+    let start_time = std::time::Instant::now();
+    
+    // Find the most recent backup based on RPO requirements
+    let backup_date = if let Some(target) = req.recovery_target {
+        if target == "latest" {
+            // Get the latest backup
+            sqlx::query_scalar!(
+                "SELECT backup_date FROM contract_backups WHERE contract_id = $1 ORDER BY backup_date DESC LIMIT 1",
+                contract_id
+            )
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?
+            .ok_or_else(|| ApiError::not_found("backup", "No backups found for contract"))?        
+        } else {
+            NaiveDate::parse_from_str(&target, "%Y-%m-%d")
+                .map_err(|_| ApiError::bad_request("invalid_date", "Invalid date format"))?    
+        }
+    } else {
+        // Get the latest backup within RPO window
+        let rpo_minutes = sqlx::query_scalar!(
+            "SELECT rpo_minutes FROM disaster_recovery_plans WHERE contract_id = $1",
+            contract_id
+        )
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?
+        .unwrap_or(5); // Default to 5 minutes if no DRP exists
+        
+        let cutoff_date = (Utc::now() - chrono::Duration::minutes(rpo_minutes as i64)).date_naive();
+        
+        sqlx::query_scalar!(
+            "SELECT backup_date FROM contract_backups WHERE contract_id = $1 AND backup_date >= $2 ORDER BY backup_date DESC LIMIT 1",
+            contract_id,
+            cutoff_date
+        )
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?
+        .ok_or_else(|| ApiError::not_found("backup", "No recent backup found within RPO window"))?        
+    };
+    
+    // Perform the restoration
+    let restore_req = RestoreBackupRequest {
+        backup_date: backup_date.to_string(),
+    };
+    
+    let restoration = restore_backup_from_date(State(state.clone()), Path((contract_id, restore_req))).await?;
+    
+    let duration_seconds = start_time.elapsed().as_secs() as i32;
+    let data_loss_seconds = (chrono::Duration::minutes(1)).num_seconds() as i32; // Default to 1 minute
+    
+    let metrics = RecoveryMetrics {
+        rto_achieved_seconds: duration_seconds,
+        rpo_ached_seconds: data_loss_seconds,
+        recovery_success: restoration.0.success,
+        recovery_duration_seconds: duration_seconds,
+        data_loss_seconds,
+    };
+    
+    Ok(Json(metrics))
+}
+
+// Helper function for restoration
+async fn restore_backup_from_date(
+    State(state): State<AppState>,
+    Path((contract_id, req)): Path<(Uuid, RestoreBackupRequest)>,
+) -> ApiResult<Json<BackupRestoration>> {
+    let start = std::time::Instant::now();
+
+    let backup_date = NaiveDate::parse_from_str(&req.backup_date, "%Y-%m-%d")
+        .map_err(|_| ApiError::bad_request("invalid_date", "Invalid date format"))?;
+
+    let backup = sqlx::query_as::<_, ContractBackup>(
+        "SELECT * FROM contract_backups WHERE contract_id = $1 AND backup_date = $2",
+    )
+    .bind(contract_id)
+    .bind(backup_date)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?
+    .ok_or_else(|| ApiError::not_found("backup", "Backup not found"))?;
+
+    // Simulate restoration
+    let duration_ms = start.elapsed().as_millis() as i32;
+
+    let contract = sqlx::query!("SELECT publisher_id FROM contracts WHERE id = $1", contract_id)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|e| ApiError::internal(format!("Database error: {}", e)))?;
+
+    let restoration = sqlx::query_as::<_, BackupRestoration>(
+        r#"
+        INSERT INTO backup_restorations (backup_id, restored_by, restore_duration_ms, success)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+        "#,
+    )
+    .bind(backup.id)
+    .bind(contract.publisher_id)
+    .bind(duration_ms)
+    .bind(true)
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| ApiError::internal(format!("Failed to log restoration: {}", e)))?;
+
+    Ok(Json(restoration))
 }

@@ -6,10 +6,12 @@ import ContractCard from '@/components/ContractCard';
 import { Search, Package, CheckCircle, Users, ArrowRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { useAnalytics } from '@/hooks/useAnalytics';
 import Navbar from '@/components/Navbar';
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
+  const { logEvent } = useAnalytics();
 
   const { data: stats } = useQuery({
     queryKey: ['stats'],
@@ -24,6 +26,10 @@ export default function Home() {
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
+      logEvent('search_performed', {
+        keyword: searchQuery.trim(),
+        source: 'home_hero',
+      });
       window.location.href = `/contracts?query=${encodeURIComponent(searchQuery)}`;
     }
   };
@@ -128,9 +134,9 @@ export default function Home() {
           </Link>
         </div>
 
-        {recentContracts && recentContracts.items.length > 0 ? (
+        {recentContracts && (recentContracts.items?.length ?? 0) > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {recentContracts.items.map((contract) => (
+            {(recentContracts.items ?? []).map((contract) => (
               <ContractCard key={contract.id} contract={contract} />
             ))}
           </div>

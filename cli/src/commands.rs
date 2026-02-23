@@ -1,10 +1,11 @@
+#![allow(dead_code)]
+
 use anyhow::{Context, Result};
 use colored::Colorize;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fmt;
 use std::fs;
-use std::path::PathBuf;
 use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,8 +19,6 @@ pub enum Network {
 use std::path::Path;
 
 use crate::patch::{PatchManager, Severity};
-use crate::profiler;
-use crate::sla::SlaManager;
 use crate::test_framework;
 
 pub fn generate_flame_graph_file(
@@ -124,16 +123,31 @@ pub async fn search(
     query: &str,
     network: Network,
     verified_only: bool,
-	 json: bool,
+    networks: Vec<String>,
+    category: Option<&str>,
+    limit: usize,
+    offset: usize,
+    json: bool,
 ) -> Result<()> {
     let client = reqwest::Client::new();
+
     let mut url = format!(
-        "{}/api/contracts?query={}&network={}",
-        api_url, query, network
+        "{}/api/contracts?query={}&limit={}&offset={}",
+        api_url, query, limit, offset
     );
+
+    if !networks.is_empty() {
+        url.push_str(&format!("&networks={}", networks.join(",")));
+    } else {
+        url.push_str(&format!("&network={}", network));
+    }
 
     if verified_only {
         url.push_str("&verified_only=true");
+    }
+
+    if let Some(cat) = category {
+        url.push_str(&format!("&category={}", cat));
     }
 
     let response = client
@@ -145,37 +159,74 @@ pub async fn search(
     let data: serde_json::Value = response.json().await?;
     let items = data["items"].as_array().context("Invalid response")?;
 
-	 if json {
+    if json {
         let contracts: Vec<serde_json::Value> = items
             .iter()
-            .map(|c| serde_json::json!({
-                "id":          c["contract_id"].as_str().unwrap_or(""),
-                "name":        c["name"].as_str().unwrap_or("Unknown"),
-                "is_verified": c["is_verified"].as_bool().unwrap_or(false),
-                "network":     c["network"].as_str().unwrap_or(""),
-            }))
-            .collect();
-        println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "contracts": contracts }))?);
+            .map(|c| -> Result<_> {
+                Ok(serde_json::json!({
+                    "id":          crate::conversions::as_str(&c["contract_id"], "contract_id")?,
+                    "name":        crate::conversions::as_str(&c["name"], "name")?,
+                    "is_verified": crate::conversions::as_bool(&c["is_verified"], "is_verified")?,
+                    "network":     crate::conversions::as_str(&c["network"], "network")?,
+                    "category":    c["category"].as_str().unwrap_or(""),
+                }))
+            })
+            .collect::<Result<_, _>>()?;
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({ "contracts": contracts }))?
+        );
         return Ok(());
     }
 
     println!("\n{}", "Search Results:".bold().cyan());
     println!("{}", "=".repeat(80).cyan());
 
+    // Show active filters
+    let mut active_filters: Vec<String> = Vec::new();
+    if !networks.is_empty() {
+        active_filters.push(format!("networks: {}", networks.join(", ")));
+    }
+    if let Some(cat) = category {
+        active_filters.push(format!("category: {}", cat));
+    }
+    if verified_only {
+        active_filters.push("verified only".to_string());
+    }
+    if !active_filters.is_empty() {
+        println!(
+            "  {} {}\n",
+            "Active filters:".bold(),
+            active_filters.join(" | ").bright_blue()
+        );
+    }
+
     if items.is_empty() {
-        println!("{}", "No contracts found.".yellow());
+        println!("{}", "No contracts found matching your filters.".yellow());
+        println!("\n{}", "Suggestions:".bold());
+        println!("  • Try a broader search query");
+        if category.is_some() {
+            println!("  • Remove the --category filter to see all contract types");
+        }
+        if !networks.is_empty() {
+            println!("  • Try adding more networks: --networks mainnet,testnet,futurenet");
+        }
+        if verified_only {
+            println!("  • Remove --verified-only to include unverified contracts");
+        }
+        println!("  • Use 'list' command to browse all contracts\n");
         return Ok(());
     }
 
     for contract in items {
-        let name = contract["name"].as_str().unwrap_or("Unknown");
-        let contract_id = contract["contract_id"].as_str().unwrap_or("");
-        let is_verified = contract["is_verified"].as_bool().unwrap_or(false);
-        let network = contract["network"].as_str().unwrap_or("");
+        let name = crate::conversions::as_str(&contract["name"], "name")?;
+        let contract_id = crate::conversions::as_str(&contract["contract_id"], "contract_id")?;
+        let is_verified = crate::conversions::as_bool(&contract["is_verified"], "is_verified")?;
+        let network = crate::conversions::as_str(&contract["network"], "network")?;
 
         println!("\n{} {}", "●".green(), name.bold());
         println!("  ID: {}", contract_id.bright_black());
-        println!(
+        print!(
             "  Status: {} | Network: {}",
             if is_verified {
                 "✓ Verified".green()
@@ -185,13 +236,20 @@ pub async fn search(
             network.bright_blue()
         );
 
+        if let Some(cat) = contract["category"].as_str() {
+            if !cat.is_empty() {
+                print!(" | Category: {}", cat.bright_magenta());
+            }
+        }
+        println!();
+
         if let Some(desc) = contract["description"].as_str() {
             println!("  {}", desc.bright_black());
         }
     }
 
     println!("\n{}", "=".repeat(80).cyan());
-    println!("Found {} contract(s)\n", items.len());
+    println!("Found {} contract(s) (offset: {})\n", items.len(), offset);
 
     Ok(())
 }
@@ -364,17 +422,17 @@ pub async fn publish(
     println!(
         "\n{}: {}",
         "Name".bold(),
-        contract["name"].as_str().unwrap_or("")
+        crate::conversions::as_str(&contract["name"], "name")?
     );
     println!(
         "{}: {}",
         "ID".bold(),
-        contract["contract_id"].as_str().unwrap_or("")
+        crate::conversions::as_str(&contract["contract_id"], "contract_id")?
     );
     println!(
         "{}: {}",
         "Network".bold(),
-        contract["network"].as_str().unwrap_or("").bright_blue()
+        crate::conversions::as_str(&contract["network"], "network")?.bright_blue()
     );
     println!();
 
@@ -400,13 +458,13 @@ pub async fn list(api_url: &str, limit: usize, network: Network, json: bool,) ->
 	if json {
         let contracts: Vec<serde_json::Value> = items
             .iter()
-            .map(|c| serde_json::json!({
-                "id":          c["contract_id"].as_str().unwrap_or(""),
-                "name":        c["name"].as_str().unwrap_or("Unknown"),
-                "is_verified": c["is_verified"].as_bool().unwrap_or(false),
-                "network":     c["network"].as_str().unwrap_or(""),
-            }))
-            .collect();
+            .map(|c| -> Result<_> { Ok(serde_json::json!({
+                "id":          crate::conversions::as_str(&c["contract_id"], "contract_id")?,
+                "name":        crate::conversions::as_str(&c["name"], "name")?,
+                "is_verified": crate::conversions::as_bool(&c["is_verified"], "is_verified")?,
+                "network":     crate::conversions::as_str(&c["network"], "network")?,
+            })) })
+            .collect::<Result<_, _>>()?;
         println!("{}", serde_json::to_string_pretty(&serde_json::json!({ "contracts": contracts }))?);
         return Ok(());
     }
@@ -420,10 +478,10 @@ pub async fn list(api_url: &str, limit: usize, network: Network, json: bool,) ->
     }
 
     for (i, contract) in items.iter().enumerate() {
-        let name = contract["name"].as_str().unwrap_or("Unknown");
-        let contract_id = contract["contract_id"].as_str().unwrap_or("");
-        let is_verified = contract["is_verified"].as_bool().unwrap_or(false);
-        let network = contract["network"].as_str().unwrap_or("");
+        let name = crate::conversions::as_str(&contract["name"], "name")?;
+        let contract_id = crate::conversions::as_str(&contract["contract_id"], "contract_id")?;
+        let is_verified = crate::conversions::as_bool(&contract["is_verified"], "is_verified")?;
+        let network = crate::conversions::as_str(&contract["network"], "network")?;
 
         println!(
             "\n{}. {} {}",
@@ -473,9 +531,9 @@ pub async fn breaking_changes(api_url: &str, old_id: &str, new_id: &str, json: b
         return Ok(());
     }
 
-    let breaking = report["breaking"].as_bool().unwrap_or(false);
-    let breaking_count = report["breaking_count"].as_u64().unwrap_or(0);
-    let non_breaking_count = report["non_breaking_count"].as_u64().unwrap_or(0);
+    let breaking = crate::conversions::as_bool(&report["breaking"], "breaking")?;
+    let breaking_count = crate::conversions::as_u64(&report["breaking_count"], "breaking_count")?;
+    let non_breaking_count = crate::conversions::as_u64(&report["non_breaking_count"], "non_breaking_count")?;
 
     let header = if breaking {
         "Breaking changes detected".red().bold()
@@ -494,8 +552,8 @@ pub async fn breaking_changes(api_url: &str, old_id: &str, new_id: &str, json: b
 
     if let Some(changes) = report["changes"].as_array() {
         for change in changes {
-            let severity = change["severity"].as_str().unwrap_or("unknown");
-            let message = change["message"].as_str().unwrap_or("Change");
+            let severity = crate::conversions::as_str(&change["severity"], "severity")?;
+            let message = crate::conversions::as_str(&change["message"], "message")?;
             let label = if severity == "breaking" {
                 "BREAKING".red().bold()
             } else {
@@ -571,7 +629,7 @@ pub async fn migrate(
     }
 
     let migration: serde_json::Value = response.json().await?;
-    let migration_id = migration["id"].as_str().unwrap();
+    let migration_id = crate::conversions::as_str(&migration["id"], "id")?;
     println!("{}", "OK".green());
     println!("Migration ID: {}", migration_id);
 
@@ -800,11 +858,11 @@ pub async fn trust_score(api_url: &str, contract_id: &str, network: Network) -> 
     let data: serde_json::Value = resp.json().await.context("Failed to parse trust score response")?;
 
     // ── Header ────────────────────────────────────────────────────────────────
-    let name       = data["contract_name"].as_str().unwrap_or("Unknown");
-    let score      = data["score"].as_f64().unwrap_or(0.0);
-    let badge      = data["badge"].as_str().unwrap_or("Bronze");
-    let badge_icon = data["badge_icon"].as_str().unwrap_or("🥉");
-    let summary    = data["summary"].as_str().unwrap_or("");
+    let name       = crate::conversions::as_str(&data["contract_name"], "contract_name")?;
+    let score      = crate::conversions::as_f64(&data["score"], "score")?;
+    let badge      = crate::conversions::as_str(&data["badge"], "badge")?;
+    let badge_icon = crate::conversions::as_str(&data["badge_icon"], "badge_icon")?;
+    let summary    = crate::conversions::as_str(&data["summary"], "summary")?;
 
     println!("\n{}", "─".repeat(56));
     println!("  Trust Score — {}", name.bold());
@@ -819,10 +877,10 @@ pub async fn trust_score(api_url: &str, contract_id: &str, network: Network) -> 
 
     if let Some(factors) = data["factors"].as_array() {
         for factor in factors {
-            let fname   = factor["name"].as_str().unwrap_or("");
-            let earned  = factor["points_earned"].as_f64().unwrap_or(0.0);
-            let max     = factor["points_max"].as_f64().unwrap_or(0.0);
-            let explain = factor["explanation"].as_str().unwrap_or("");
+            let fname   = crate::conversions::as_str(&factor["name"], "name")?;
+            let earned  = crate::conversions::as_f64(&factor["points_earned"], "points_earned")?;
+            let max     = crate::conversions::as_f64(&factor["points_max"], "points_max")?;
+            let explain = crate::conversions::as_str(&factor["explanation"], "explanation")?;
 
             // Mini progress bar (10 chars)
             let filled = ((earned / max) * 10.0).round() as usize;
@@ -836,13 +894,14 @@ pub async fn trust_score(api_url: &str, contract_id: &str, network: Network) -> 
 
     // ── Weight documentation ──────────────────────────────────────────────────
     println!("\n  {} Score Weights\n", "⚖️".bold());
-    if let Some(weights) = data["weights"].as_object() {
+    if let Ok(weights) = crate::conversions::as_object(&data["weights"], "weights") {
         for (k, v) in weights {
-            println!("  {:<22} {:.0} pts max", k, v.as_f64().unwrap_or(0.0));
+            let max_pts = crate::conversions::as_f64(v, "weight_value")?;
+            println!("  {:<22} {:.0} pts max", k, max_pts);
         }
     }
 
-    let computed_at = data["computed_at"].as_str().unwrap_or("");
+    let computed_at = crate::conversions::as_str(&data["computed_at"], "computed_at")?;
     println!("\n  Computed at: {}\n", computed_at.dimmed());
 
     Ok(())
@@ -867,9 +926,9 @@ pub async fn patch_notify(api_url: &str, patch_id: &str) -> Result<()> {
     }
 
     for (i, c) in contracts.iter().enumerate() {
-        let cid = c["contract_id"].as_str().unwrap_or("");
-        let name = c["name"].as_str().unwrap_or("Unknown");
-        let net = c["network"].as_str().unwrap_or("");
+        let cid = crate::conversions::as_str(&c["contract_id"], "contract_id")?;
+        let name = crate::conversions::as_str(&c["name"], "name")?;
+        let net = crate::conversions::as_str(&c["network"], "network")?;
         println!(
             "  {}. {} ({}) [{}]",
             i + 1,
@@ -926,11 +985,11 @@ pub async fn deps_list(api_url: &str, contract_id: &str) -> Result<()> {
         return Ok(());
     }
 
-    fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) {
+    fn print_tree(nodes: &[serde_json::Value], prefix: &str, is_last: bool) -> Result<()> {
         for (i, node) in nodes.iter().enumerate() {
-            let name = node["name"].as_str().unwrap_or("Unknown");
-            let constraint = node["constraint_to_parent"].as_str().unwrap_or("*");
-            let contract_id = node["contract_id"].as_str().unwrap_or("");
+            let name = crate::conversions::as_str(&node["name"], "name")?;
+            let constraint = crate::conversions::as_str(&node["constraint_to_parent"], "constraint_to_parent")?;
+            let contract_id = crate::conversions::as_str(&node["contract_id"], "contract_id")?;
             
             let is_node_last = i == nodes.len() - 1;
             let marker = if is_node_last { "└──" } else { "├──" };
@@ -947,13 +1006,14 @@ pub async fn deps_list(api_url: &str, contract_id: &str) -> Result<()> {
             if let Some(children) = node["dependencies"].as_array() {
                 if !children.is_empty() {
                      let new_prefix = format!("{}{}", prefix, if is_node_last { "    " } else { "│   " });
-                     print_tree(children, &new_prefix, true);
+                     print_tree(children, &new_prefix, true)?;
                 }
             }
         }
+        Ok(())
     }
 
-    print_tree(tree, "", false);
+    print_tree(tree, "", false)?;
 
     println!();
     Ok(())
@@ -1127,9 +1187,9 @@ pub async fn config_get(api_url: &str, contract_id: &str, environment: &str) -> 
     println!("{}", "=".repeat(80).cyan());
     println!("{}: {}", "Contract ID".bold(), contract_id);
     println!("{}: {}", "Environment".bold(), environment);
-    println!("{}: {}", "Version".bold(), config["version"].as_i64().unwrap_or(0));
-    println!("{}: {}", "Contains Secrets".bold(), config["has_secrets"].as_bool().unwrap_or(false));
-    println!("{}: {}", "Created By".bold(), config["created_by"].as_str().unwrap_or("Unknown"));
+    println!("{}: {}", "Version".bold(), crate::conversions::as_i64(&config["version"], "version")?);
+    println!("{}: {}", "Contains Secrets".bold(), crate::conversions::as_bool(&config["has_secrets"], "has_secrets")?);
+    println!("{}: {}", "Created By".bold(), crate::conversions::as_str(&config["created_by"], "created_by")?);
     println!("{}:", "Config Data".bold());
     println!("{}", serde_json::to_string_pretty(&config["config_data"]).unwrap_or_default().green());
     println!();
@@ -1171,7 +1231,7 @@ pub async fn config_set(
 
     println!("{}", "✓ Configuration published successfully!".green().bold());
     println!("  {}: {}", "Environment".bold(), environment);
-    println!("  {}: {}", "New Version".bold(), config["version"].as_i64().unwrap_or(0));
+    println!("  {}: {}", "New Version".bold(), crate::conversions::as_i64(&config["version"], "version")?);
     println!();
 
     Ok(())
@@ -1201,9 +1261,9 @@ pub async fn config_history(api_url: &str, contract_id: &str, environment: &str)
         println!(
             "  {}. {} (v{}) - By: {}",
             i + 1,
-            config["created_at"].as_str().unwrap_or("Unknown Date").bright_black(),
-            config["version"].as_i64().unwrap_or(0),
-            config["created_by"].as_str().unwrap_or("Unknown").bright_blue()
+            crate::conversions::as_str(&config["created_at"], "created_at")?.bright_black(),
+            crate::conversions::as_i64(&config["version"], "version")?,
+            crate::conversions::as_str(&config["created_by"], "created_by")?.bright_blue()
         );
     }
     println!();
@@ -1238,7 +1298,7 @@ pub async fn config_rollback(
 
     println!("{}", "✓ Configuration rolled back successfully!".green().bold());
     println!("  {}: {}", "Environment".bold(), environment);
-    println!("  {}: {}", "New Active Version".bold(), config["version"].as_i64().unwrap_or(0));
+    println!("  {}: {}", "New Active Version".bold(), crate::conversions::as_i64(&config["version"], "version")?);
     println!();
 
     Ok(())
@@ -1313,7 +1373,7 @@ pub async fn scan_deps(
     }
 
     let report: serde_json::Value = response.json().await?;
-    let findings = report["findings"].as_array().unwrap();
+    let findings = crate::conversions::as_array(&report["findings"], "findings")?;
 
     if findings.is_empty() {
         println!("{}", "✓ No vulnerabilities found!".green().bold());
@@ -1325,13 +1385,13 @@ pub async fn scan_deps(
     println!("{}", "=".repeat(80).red());
 
     for finding in findings {
-        let package = finding["package_name"].as_str().unwrap_or("Unknown");
-        let version = finding["current_version"].as_str().unwrap_or("Unknown");
-        let severity = finding["severity"].as_str().unwrap_or("Unknown");
-        let cve_id = finding["cve_id"].as_str().unwrap_or("Unknown");
-        let recommended = finding["recommended_version"].as_str().unwrap_or("None");
+        let package = crate::conversions::as_str(&finding["package_name"], "package_name")?;
+        let version = crate::conversions::as_str(&finding["current_version"], "current_version")?;
+        let severity = crate::conversions::as_str(&finding["severity"], "severity")?;
+        let cve_id = crate::conversions::as_str(&finding["cve_id"], "cve_id")?;
+        let recommended = crate::conversions::as_str(&finding["recommended_version"], "recommended_version")?;
 
-        let sev_enum = severity.parse::<Severity>().unwrap_or(Severity::Low);
+        let sev_enum = severity.parse::<Severity>().context("Invalid severity string")?;
         if matches!(sev_enum, Severity::Critical | Severity::High) {
             has_high_severity = true;
         }
@@ -1352,6 +1412,7 @@ pub async fn scan_deps(
 
 #[cfg(test)]
 mod flamegraph_and_network_tests {
+mod tests_network {
     use super::*;
     use std::collections::HashMap;
     use std::fs;
@@ -1551,12 +1612,12 @@ pub async fn validate_call(
     let data: serde_json::Value = response.json().await?;
 
     if !status.is_success() {
-        let error_msg = data["message"].as_str().unwrap_or("Unknown error");
+        let error_msg = crate::conversions::as_str(&data["message"], "message")?;
         println!("\n{} {}", "Error:".bold().red(), error_msg);
         anyhow::bail!("Validation failed: {}", error_msg);
     }
 
-    let valid = data["valid"].as_bool().unwrap_or(false);
+    let valid = crate::conversions::as_bool(&data["valid"], "valid")?;
 
     println!("\n{}", "Contract Call Validation".bold().cyan());
     println!("{}", "=".repeat(60).cyan());
@@ -1571,8 +1632,8 @@ pub async fn validate_call(
         if let Some(params) = data["parsed_params"].as_array() {
             println!("\n{}", "Parsed Parameters:".bold());
             for param in params {
-                let name = param["name"].as_str().unwrap_or("?");
-                let type_name = param["expected_type"].as_str().unwrap_or("?");
+                let name = crate::conversions::as_str(&param["name"], "name")?;
+                let type_name = crate::conversions::as_str(&param["expected_type"], "expected_type")?;
                 println!("  {} {}: {}", "•".green(), name.bold(), type_name);
             }
         }
@@ -1587,7 +1648,7 @@ pub async fn validate_call(
             if !warnings.is_empty() {
                 println!("\n{}", "Warnings:".bold().yellow());
                 for warning in warnings {
-                    let msg = warning["message"].as_str().unwrap_or("?");
+                    let msg = crate::conversions::as_str(&warning["message"], "message")?;
                     println!("  {} {}", "⚠".yellow(), msg);
                 }
             }
@@ -1599,8 +1660,8 @@ pub async fn validate_call(
         if let Some(errors) = data["errors"].as_array() {
             println!("\n{}", "Errors:".bold().red());
             for error in errors {
-                let code = error["code"].as_str().unwrap_or("?");
-                let msg = error["message"].as_str().unwrap_or("?");
+                let code = crate::conversions::as_str(&error["code"], "code")?;
+                let msg = crate::conversions::as_str(&error["message"], "message")?;
                 let field = error["field"].as_str();
 
                 if let Some(f) = field {
@@ -1654,7 +1715,7 @@ pub async fn generate_bindings(
 
     if !status.is_success() {
         let error: serde_json::Value = response.json().await?;
-        let msg = error["message"].as_str().unwrap_or("Unknown error");
+        let msg = crate::conversions::as_str(&error["message"], "message")?;
         anyhow::bail!("Failed to generate bindings: {}", msg);
     }
 
@@ -1693,11 +1754,11 @@ pub async fn list_functions(api_url: &str, contract_id: &str) -> Result<()> {
     let data: serde_json::Value = response.json().await?;
 
     if !status.is_success() {
-        let msg = data["message"].as_str().unwrap_or("Unknown error");
+        let msg = crate::conversions::as_str(&data["message"], "message")?;
         anyhow::bail!("Failed to list functions: {}", msg);
     }
 
-    let contract_name = data["contract_name"].as_str().unwrap_or("Unknown");
+    let contract_name = crate::conversions::as_str(&data["contract_name"], "contract_name")?;
     let functions = data["functions"].as_array();
 
     println!("\n{}", "Contract Functions".bold().cyan());
@@ -1709,10 +1770,10 @@ pub async fn list_functions(api_url: &str, contract_id: &str) -> Result<()> {
         println!("\n{} {} function(s):\n", "Found".bold(), funcs.len());
 
         for func in funcs {
-            let name = func["name"].as_str().unwrap_or("?");
-            let visibility = func["visibility"].as_str().unwrap_or("?");
-            let return_type = func["return_type"].as_str().unwrap_or("void");
-            let is_mutable = func["is_mutable"].as_bool().unwrap_or(false);
+            let name = crate::conversions::as_str(&func["name"], "name")?;
+            let visibility = crate::conversions::as_str(&func["visibility"], "visibility")?;
+            let return_type = crate::conversions::as_str(&func["return_type"], "return_type")?;
+            let is_mutable = crate::conversions::as_bool(&func["is_mutable"], "is_mutable")?;
 
             let visibility_badge = if visibility == "public" {
                 "public".green()
@@ -1736,14 +1797,12 @@ pub async fn list_functions(api_url: &str, contract_id: &str) -> Result<()> {
 
             // Parameters
             if let Some(params) = func["params"].as_array() {
-                let param_strs: Vec<String> = params
-                    .iter()
-                    .map(|p| {
-                        let pname = p["name"].as_str().unwrap_or("?");
-                        let ptype = p["type_name"].as_str().unwrap_or("?");
-                        format!("{}: {}", pname, ptype)
-                    })
-                    .collect();
+                let mut param_strs: Vec<String> = Vec::new();
+                for p in params {
+                    let pname = crate::conversions::as_str(&p["name"], "name")?;
+                    let ptype = crate::conversions::as_str(&p["type_name"], "type_name")?;
+                    param_strs.push(format!("{}: {}", pname, ptype));
+                }
 
                 println!("     ({}) -> {}", param_strs.join(", "), return_type);
             }

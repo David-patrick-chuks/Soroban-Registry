@@ -43,7 +43,7 @@ pub fn detect_all(source: &str) -> HashMap<String, DetectionResult> {
             "EL-001" => detect_events_on_transfers(&lines),
             "DS-001" => detect_contracttype(&lines),
             "SP-001" => detect_datakey_enum(&lines),
-            "SP-002" => detect_raw_storage_keys(&lines), 
+            "SP-005" => detect_raw_storage_keys(&lines), 
             "RL-001" => detect_bounded_loops(&lines),
             _ => detect_generic(&lines, &patterns),
         };

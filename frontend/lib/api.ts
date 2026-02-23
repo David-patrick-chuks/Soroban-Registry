@@ -847,6 +847,59 @@ export const api = {
       '/api/templates'
     );
   },
+
+  // SDK / Wasm / Network Compatibility Testing (Issue #261)
+  async getCompatibilityMatrix(id: string): Promise<CompatibilityTestMatrixResponse> {
+    return handleApiCall<CompatibilityTestMatrixResponse>(
+      () => fetch(`${API_URL}/api/contracts/${id}/compatibility-matrix`),
+      `/api/contracts/${id}/compatibility-matrix`
+    );
+  },
+
+  async runCompatibilityTest(id: string, data: RunCompatibilityTestRequest): Promise<CompatibilityTestEntry> {
+    return handleApiCall<CompatibilityTestEntry>(
+      () => fetch(`${API_URL}/api/contracts/${id}/compatibility-matrix/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      }),
+      `/api/contracts/${id}/compatibility-matrix/test`
+    );
+  },
+
+  async getCompatibilityHistory(id: string, limit?: number, offset?: number): Promise<CompatibilityHistoryResponse> {
+    const params = new URLSearchParams();
+    if (limit != null) params.set('limit', String(limit));
+    if (offset != null) params.set('offset', String(offset));
+    const qs = params.toString();
+    return handleApiCall<CompatibilityHistoryResponse>(
+      () => fetch(`${API_URL}/api/contracts/${id}/compatibility-matrix/history${qs ? `?${qs}` : ''}`),
+      `/api/contracts/${id}/compatibility-matrix/history`
+    );
+  },
+
+  async getCompatibilityNotifications(id: string): Promise<CompatibilityNotification[]> {
+    return handleApiCall<CompatibilityNotification[]>(
+      () => fetch(`${API_URL}/api/contracts/${id}/compatibility-matrix/notifications`),
+      `/api/contracts/${id}/compatibility-matrix/notifications`
+    );
+  },
+
+  async markCompatibilityNotificationsRead(id: string): Promise<unknown> {
+    return handleApiCall<unknown>(
+      () => fetch(`${API_URL}/api/contracts/${id}/compatibility-matrix/notifications/read`, {
+        method: 'POST',
+      }),
+      `/api/contracts/${id}/compatibility-matrix/notifications/read`
+    );
+  },
+
+  async getCompatibilityDashboard(): Promise<CompatibilityDashboardResponse> {
+    return handleApiCall<CompatibilityDashboardResponse>(
+      () => fetch(`${API_URL}/api/compatibility-dashboard`),
+      '/api/compatibility-dashboard'
+    );
+  },
 };
 
 export interface Template {
@@ -938,6 +991,79 @@ export interface AddCompatibilityRequest {
   target_version: string;
   stellar_version?: string;
   is_compatible: boolean;
+}
+
+// ─── SDK / Wasm / Network Compatibility Testing (Issue #261) ─────────────────
+
+export type CompatibilityTestStatus = 'compatible' | 'warning' | 'incompatible';
+
+export interface CompatibilityTestEntry {
+  sdk_version: string;
+  wasm_runtime: string;
+  network: string;
+  status: CompatibilityTestStatus;
+  tested_at: string;
+  test_duration_ms?: number;
+  error_message?: string;
+}
+
+export interface CompatibilityTestSummary {
+  total_tests: number;
+  compatible_count: number;
+  warning_count: number;
+  incompatible_count: number;
+}
+
+export interface CompatibilityTestMatrixResponse {
+  contract_id: string;
+  sdk_versions: string[];
+  wasm_runtimes: string[];
+  networks: string[];
+  entries: CompatibilityTestEntry[];
+  summary: CompatibilityTestSummary;
+  last_tested?: string;
+}
+
+export interface RunCompatibilityTestRequest {
+  sdk_version: string;
+  wasm_runtime: string;
+  network: string;
+}
+
+export interface CompatibilityHistoryEntry {
+  id: string;
+  contract_id: string;
+  sdk_version: string;
+  wasm_runtime: string;
+  network: string;
+  previous_status?: CompatibilityTestStatus;
+  new_status: CompatibilityTestStatus;
+  changed_at: string;
+  change_reason?: string;
+}
+
+export interface CompatibilityHistoryResponse {
+  contract_id: string;
+  changes: CompatibilityHistoryEntry[];
+  total: number;
+}
+
+export interface CompatibilityNotification {
+  id: string;
+  contract_id: string;
+  sdk_version: string;
+  message: string;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface CompatibilityDashboardResponse {
+  total_contracts_tested: number;
+  overall_compatible: number;
+  overall_warning: number;
+  overall_incompatible: number;
+  sdk_versions: string[];
+  recent_changes: CompatibilityHistoryEntry[];
 }
 
 // ─── Formal Verification ─────────────────────────────────────────────────────

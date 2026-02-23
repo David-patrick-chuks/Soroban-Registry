@@ -1,17 +1,17 @@
-Pull Request: Contract Dependency Analysis and Visualization
+## New Feature: Automated Contract Health Scoring (#246)
 
-This pull request introduces a system for analyzing and visualizing dependencies between Soroban contracts. It's designed to help developers understand how their contracts interact and to safely manage updates across the ecosystem.
+Implemented a comprehensive health scoring system to track the quality, activity, and security of Soroban contracts.
 
-The core of this update is the automated detection of dependencies. When a new contract version is published, the registry now scans its ABI to find any interface or client declarations. These relationships are stored and used to build a comprehensive dependency graph.
+- **Dynamic Scoring Engine**: Calculates a 0-100 score based on verification status (40%), deployment activity (20%), update frequency (20%), and security scan results (10%).
+- **Daily Automation**: Integrated a daily background job into the aggregation worker that triggers at 2 AM UTC to ensure scores stay current.
+- **Security Deductions**: Automatically penalizes contracts with critical or high-severity CVE scan results.
+- **Abandonment Detection**: Identifies and flags abandoned contracts (no updates in >1 year) with a maintenance penalty.
+- **API Integration**: Health scores are now reflected in all contract listings and detail endpoints.
 
-For the API, I've added several new endpoints:
-- A dependency lookup to see what a contract calls.
-- A dependent lookup to see what other contracts rely on it.
-- An impact analysis tool that shows the full ripple effect of a contract change.
-- A global graph endpoint that exports data ready for D3.js visualization.
+#### Key Files
+- [health.rs](file:///c:/Users/hp/Downloads/Soroban-Registry/backend/api/src/health.rs): Core scoring logic and bulk update job.
+- [aggregation.rs](file:///c:/Users/hp/Downloads/Soroban-Registry/backend/api/src/aggregation.rs): background task integration.
+- [models.rs](file:///c:/Users/hp/Downloads/Soroban-Registry/backend/shared/src/models.rs): Updated shared `Contract` struct.
+- [038_add_health_score.sql](file:///c:/Users/hp/Downloads/Soroban-Registry/database/migrations/038_add_health_score.sql): Database schema migration.
 
-To keep things fast, I've integrated these lookups with our existing caching system. I've also added a cycle detection feature that will flag any circular dependencies during the publication process to prevent potential deployment issues.
-
-Testing included unit checks for the ABI parsing logic and manual verification of the graph data structure and cache performance.
-
-#253
+Fixes #246

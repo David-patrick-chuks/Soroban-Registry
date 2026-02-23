@@ -230,19 +230,14 @@ pub struct EnumVariant {
 }
 
 /// Function visibility
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionVisibility {
     /// Public function callable externally
+    #[default]
     Public,
     /// Internal function (not callable externally)
     Internal,
-}
-
-impl Default for FunctionVisibility {
-    fn default() -> Self {
-        FunctionVisibility::Public
-    }
 }
 
 /// Function parameter definition

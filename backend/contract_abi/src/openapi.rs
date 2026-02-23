@@ -144,7 +144,7 @@ pub fn generate_openapi(abi: &ContractABI, base_path: Option<&str>) -> OpenApiDo
         openapi: "3.0.0".to_string(),
         info,
         paths,
-        components: if components.schemas.as_ref().map_or(true, |s| s.is_empty()) {
+        components: if components.schemas.as_ref().is_none_or(|s| s.is_empty()) {
             None
         } else {
             Some(components)
@@ -173,7 +173,7 @@ fn operation_from_function(
                 examples: None,
             },
         )]);
-        let example = example;
+        
         (
             Some(RequestBody {
                 required: true,
@@ -539,7 +539,7 @@ impl SchemaGenerator {
                             description: Some(
                                 variants
                                     .iter()
-                                    .map(|v| format!("{}", v.name))
+                                    .map(|v| v.name.to_string())
                                     .collect::<Vec<_>>()
                                     .join(", "),
                             ),

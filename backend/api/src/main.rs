@@ -20,6 +20,9 @@ mod custom_metrics_handlers;
 mod dependency;
 mod deprecation_handlers;
 pub mod health_monitor;
+mod deprecation_handlers;
+pub mod health_monitor;
+pub mod signing_handlers;
 mod type_safety;
 
 use anyhow::Result;

@@ -445,9 +445,9 @@ impl CallValidator {
     ) -> Option<ValidationWarning> {
         match (value, expected_type) {
             (ParsedValue::Integer(n), SorobanType::I32) => {
-                if *n > i32::MAX as i128 || *n < i32::MIN as i128 {
-                    Some(ValidationWarning::potential_overflow(param_name))
-                } else if *n > (i32::MAX as i128 * 9 / 10) || *n < (i32::MIN as i128 * 9 / 10) {
+                let limit = i32::MAX as i128;
+                let min_limit = i32::MIN as i128;
+                if *n > (limit * 9 / 10) || *n < (min_limit * 9 / 10) {
                     Some(ValidationWarning::potential_overflow(param_name))
                 } else {
                     None

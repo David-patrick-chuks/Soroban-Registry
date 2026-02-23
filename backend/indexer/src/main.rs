@@ -325,36 +325,32 @@ async fn main() -> Result<()> {
 
 /// Signal handling support
 mod signal_support {
-    use std::future::Future;
+    pub async fn create_shutdown_signal() {
+        #[cfg(unix)]
+        {
+            use tokio::signal::unix::{signal, SignalKind};
 
-    pub fn create_shutdown_signal() -> impl Future<Output = ()> {
-        async {
-            #[cfg(unix)]
-            {
-                use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm =
+                signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
+            let mut sigint =
+                signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
 
-                let mut sigterm =
-                    signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
-                let mut sigint =
-                    signal(SignalKind::interrupt()).expect("Failed to register SIGINT handler");
-
-                tokio::select! {
-                    _ = sigterm.recv() => {
-                        tracing::info!("Received SIGTERM");
-                    }
-                    _ = sigint.recv() => {
-                        tracing::info!("Received SIGINT");
-                    }
+            tokio::select! {
+                _ = sigterm.recv() => {
+                    tracing::info!("Received SIGTERM");
+                }
+                _ = sigint.recv() => {
+                    tracing::info!("Received SIGINT");
                 }
             }
+        }
 
-            #[cfg(windows)]
-            {
-                tokio::signal::ctrl_c()
-                    .await
-                    .expect("Failed to listen for Ctrl+C");
-                tracing::info!("Received Ctrl+C");
-            }
+        #[cfg(windows)]
+        {
+            tokio::signal::ctrl_c()
+                .await
+                .expect("Failed to listen for Ctrl+C");
+            tracing::info!("Received Ctrl+C");
         }
     }
 }

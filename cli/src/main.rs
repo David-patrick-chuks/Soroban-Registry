@@ -1,6 +1,7 @@
 #![allow(unused_variables)]
 
 mod backup;
+mod batch_verify;
 mod commands;
 mod config;
 mod conversions;
@@ -396,10 +397,48 @@ pub enum Commands {
         signature: Option<String>,
     },
 
+    /// Verify a contract binary against an Ed25519 signature locally
+    VerifyContract {
+        /// Path to the contract WASM/binary file
+        wasm_path: String,
+
+        /// Contract ID used when signing
+        #[arg(long)]
+        contract_id: String,
+
+        /// Contract version used when signing
+        #[arg(long)]
+        version: String,
+
+        /// Ed25519 signature (base64)
+        #[arg(long)]
+        signature: String,
+
+        /// Ed25519 public key (base64)
+        #[arg(long)]
+        public_key: String,
+    },
+
     /// Manage signing keys and signatures
     Keys {
         #[command(subcommand)]
         action: KeysCommands,
+    },
+
+    /// Verify multiple contracts in a single atomic batch (all succeed or all rollback)
+    BatchVerify {
+        /// Comma-separated list of contract IDs to verify.
+        /// Optionally suffix with @version (e.g. abc123@1.0.0,def456)
+        #[arg(long)]
+        contracts: String,
+
+        /// Stellar address or username initiating the batch (recorded in audit log)
+        #[arg(long)]
+        initiated_by: String,
+
+        /// Output results as machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Manage webhooks for contract lifecycle events
@@ -1266,6 +1305,27 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
+        Commands::VerifyContract {
+            wasm_path,
+            contract_id,
+            version,
+            signature,
+            public_key,
+        } => {
+            log::debug!(
+                "Command: verify-contract | wasm_path={} contract_id={} version={}",
+                wasm_path,
+                contract_id,
+                version
+            );
+            package_signing::verify_contract_local(
+                &wasm_path,
+                &contract_id,
+                &version,
+                &signature,
+                &public_key,
+            )?;
+        }
         Commands::Keys { action } => match action {
             KeysCommands::Generate {} => {
                 log::debug!("Command: keys generate");
@@ -1304,6 +1364,18 @@ async fn main() -> Result<()> {
                 .await?;
             }
         },
+        Commands::BatchVerify {
+            contracts,
+            initiated_by,
+            json,
+        } => {
+            log::debug!(
+                "Command: batch-verify | contracts={} initiated_by={}",
+                contracts,
+                initiated_by
+            );
+            batch_verify::run_batch_verify(&cli.api_url, &contracts, &initiated_by, json).await?;
+        }
         Commands::Webhook { action } => match action {
             WebhookCommands::Create { url, events, secret } => {
                 let event_list: Vec<String> =

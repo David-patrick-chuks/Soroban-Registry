@@ -178,17 +178,12 @@ pub struct EnumVariant {
     pub doc: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum FunctionVisibility {
+    #[default]
     Public,
     Internal,
-}
-
-impl Default for FunctionVisibility {
-    fn default() -> Self {
-        FunctionVisibility::Public
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

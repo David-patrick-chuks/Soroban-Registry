@@ -7,6 +7,8 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::{json, Value};
 use std::time::Duration;
 use shared::{
@@ -31,9 +33,10 @@ use crate::{
     state::AppState,
     type_safety::parser::parse_json_spec,
     type_safety::{generate_openapi, to_json, to_yaml},
+    dependency,
 };
 
-fn db_internal_error(operation: &str, err: sqlx::Error) -> ApiError {
+pub(crate) fn db_internal_error(operation: &str, err: sqlx::Error) -> ApiError {
     tracing::error!(operation = operation, error = ?err, "database operation failed");
     ApiError::internal("An unexpected database error occurred")
 }
@@ -458,6 +461,91 @@ pub async fn create_contract_version(
         )
     })?;
 
+    // Optional Ed25519 signature verification for this contract version.
+    // When a signature is provided, we require a matching publisher_key and
+    // verify the detached signature over "{contract_id}:{version}:{wasm_hash}".
+    let (version_signature, version_publisher_key, version_algorithm) =
+        match (&req.signature, &req.publisher_key) {
+            (Some(sig), Some(pk)) if !sig.trim().is_empty() && !pk.trim().is_empty() => {
+                // Decode public key (base64, 32 bytes)
+                let pk_bytes = BASE64.decode(pk.trim()).map_err(|_| {
+                    ApiError::bad_request(
+                        "InvalidPublisherKey",
+                        "publisher_key must be valid base64-encoded Ed25519 public key",
+                    )
+                })?;
+                let pk_array: [u8; 32] = pk_bytes.as_slice().try_into().map_err(|_| {
+                    ApiError::bad_request(
+                        "InvalidPublisherKey",
+                        "publisher_key must decode to 32 bytes",
+                    )
+                })?;
+                let verifying_key = VerifyingKey::from_bytes(&pk_array).map_err(|_| {
+                    ApiError::bad_request(
+                        "InvalidPublisherKey",
+                        "publisher_key is not a valid Ed25519 public key",
+                    )
+                })?;
+
+                // Decode signature (base64, 64 bytes)
+                let sig_bytes = BASE64.decode(sig.trim()).map_err(|_| {
+                    ApiError::bad_request(
+                        "InvalidSignature",
+                        "signature must be valid base64-encoded Ed25519 signature",
+                    )
+                })?;
+                let sig_array: [u8; 64] = sig_bytes.as_slice().try_into().map_err(|_| {
+                    ApiError::bad_request("InvalidSignature", "signature must decode to 64 bytes")
+                })?;
+                let signature = Signature::from_bytes(&sig_array);
+
+                // Construct signing message and verify
+                let message = crate::signing_handlers::create_signing_message(
+                    &req.wasm_hash,
+                    &contract_id,
+                    &req.version,
+                );
+
+                let crypto_valid = verifying_key.verify(&message, &signature).is_ok();
+                if !crypto_valid {
+                    return Err(ApiError::unprocessable(
+                        "InvalidSignature",
+                        "Ed25519 signature verification failed for this contract version",
+                    ));
+                }
+
+                let algo = req
+                    .signature_algorithm
+                    .clone()
+                    .unwrap_or_else(|| "ed25519".to_string());
+
+                tracing::info!(
+                    contract_id = %contract_id,
+                    version = %req.version,
+                    wasm_hash = %req.wasm_hash,
+                    "contract version signature verified"
+                );
+
+                (
+                    Some(sig.trim().to_string()),
+                    Some(pk.trim().to_string()),
+                    Some(algo),
+                )
+            }
+            (None, None) => {
+                // No signature metadata provided – proceed without cryptographic binding.
+                (None, None, None)
+            }
+            (Some(s), None) if s.trim().is_empty() => (None, None, None),
+            (None, Some(pk)) if pk.trim().is_empty() => (None, None, None),
+            _ => {
+                return Err(ApiError::bad_request(
+                    "InvalidSignatureMetadata",
+                    "signature and publisher_key must both be provided (or both omitted)",
+                ));
+            }
+        };
+
     let existing_versions: Vec<String> =
         sqlx::query_scalar("SELECT version FROM contract_versions WHERE contract_id = $1")
             .bind(contract_uuid)
@@ -516,8 +604,9 @@ pub async fn create_contract_version(
         .map_err(|err| db_internal_error("begin transaction", err))?;
 
     let version_row: ContractVersion = sqlx::query_as(
-        "INSERT INTO contract_versions (contract_id, version, wasm_hash, source_url, commit_hash, release_notes) \
-         VALUES ($1, $2, $3, $4, $5, $6) \
+        "INSERT INTO contract_versions \
+            (contract_id, version, wasm_hash, source_url, commit_hash, release_notes, signature, publisher_key, signature_algorithm) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) \
          RETURNING *",
     )
     .bind(contract_uuid)
@@ -526,6 +615,9 @@ pub async fn create_contract_version(
     .bind(&req.source_url)
     .bind(&req.commit_hash)
     .bind(&req.release_notes)
+    .bind(&version_signature)
+    .bind(&version_publisher_key)
+    .bind(&version_algorithm)
     .fetch_one(&mut *tx)
     .await
     .map_err(|err| match err {
@@ -663,7 +755,7 @@ pub async fn publish_contract(
     .await
     .map_err(|err| {
         if let sqlx::Error::Database(ref e) = err {
-            if e.constraint().as_deref() == Some("contracts_contract_id_network_key") {
+            if e.constraint() == Some("contracts_contract_id_network_key") {
                 return ApiError::conflict(
                     "ContractAlreadyRegistered",
                     format!(
@@ -1563,7 +1655,7 @@ pub async fn get_contract_interactions(
             _ => db_internal_error("get contract for interactions", err),
         })?;
 
-    let limit = params.limit.min(100).max(1);
+    let limit = params.limit.clamp(1, 100);
     let offset = params.offset.max(0);
 
     let from_ts = params

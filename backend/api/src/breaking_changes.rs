@@ -98,7 +98,7 @@ pub fn diff_abi(old: &ContractABI, new: &ContractABI) -> Vec<BreakingChange> {
         }
     }
 
-    for (name, _func) in &new_funcs {
+    for name in new_funcs.keys() {
         if !old_funcs.contains_key(name) {
             changes.push(BreakingChange {
                 severity: ChangeSeverity::NonBreaking,
@@ -211,7 +211,7 @@ fn diff_types(
         }
     }
 
-    for (name, _new_type) in new_types {
+    for name in new_types.keys() {
         if !old_types.contains_key(name) {
             changes.push(BreakingChange {
                 severity: ChangeSeverity::NonBreaking,
@@ -304,7 +304,7 @@ fn diff_struct_fields(
         }
     }
 
-    for (name, _field) in &new_map {
+    for name in new_map.keys() {
         if !old_map.contains_key(name) {
             changes.push(BreakingChange {
                 severity: ChangeSeverity::Breaking,
@@ -350,7 +350,7 @@ fn diff_enum_variants(
         }
     }
 
-    for (name, _variant) in &new_map {
+    for name in new_map.keys() {
         if !old_map.contains_key(name) {
             changes.push(BreakingChange {
                 severity: ChangeSeverity::NonBreaking,

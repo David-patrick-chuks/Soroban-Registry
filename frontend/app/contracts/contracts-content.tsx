@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api, ContractSearchParams, Contract } from '@/lib/api';
 import ContractCard from '@/components/ContractCard';
@@ -10,8 +10,9 @@ import { FilterPanel } from '@/components/contracts/FilterPanel';
 import { ResultsCount } from '@/components/contracts/ResultsCount';
 import { SearchBar } from '@/components/contracts/SearchBar';
 import { SortDropdown, SortBy } from '@/components/contracts/SortDropdown';
-import { Filter, Package, SlidersHorizontal, X, ArrowUpDown } from 'lucide-react';
+import { Filter, Package, SlidersHorizontal, X } from 'lucide-react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { useAnalytics } from '@/hooks/useAnalytics';
 
 const DEFAULT_PAGE_SIZE = 12;
 const CATEGORY_OPTIONS = [
@@ -106,6 +107,8 @@ export function ContractsContent() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const { logEvent } = useAnalytics();
+  const lastSearchSignatureRef = useRef<string>('');
 
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
 
@@ -153,6 +156,38 @@ export function ContractsContent() {
     queryFn: () => api.getContracts(apiParams),
     placeholderData: (previousData) => previousData,
   });
+
+  useEffect(() => {
+    const payload = {
+      keyword: debouncedQuery || '',
+      categories: filters.categories,
+      languages: filters.languages,
+      networks: filters.networks,
+      author: filters.author || undefined,
+      verified_only: filters.verified_only,
+      sort_by: filters.sort_by,
+      page: filters.page,
+      page_size: filters.page_size,
+    };
+
+    const hasSearchInput =
+      Boolean(payload.keyword) ||
+      payload.categories.length > 0 ||
+      payload.languages.length > 0 ||
+      payload.networks.length > 0 ||
+      Boolean(payload.author) ||
+      payload.verified_only ||
+      payload.sort_by !== 'created_at' ||
+      payload.page > 1;
+
+    if (!hasSearchInput) return;
+
+    const signature = JSON.stringify(payload);
+    if (lastSearchSignatureRef.current === signature) return;
+    lastSearchSignatureRef.current = signature;
+
+    logEvent('search_performed', payload);
+  }, [debouncedQuery, filters, logEvent]);
 
   const clearAllFilters = () =>
     setFilters((current) => ({
@@ -301,7 +336,13 @@ export function ContractsContent() {
           <SearchBar
             value={filters.query}
             onChange={(value) => setFilters((current) => ({ ...current, query: value, page: 1 }))}
-            onClear={() => setFilters((current) => ({ ...current, query: '', page: 1 }))}
+            onClear={() => {
+              logEvent('search_performed', {
+                keyword: '',
+                action: 'clear_query',
+              });
+              setFilters((current) => ({ ...current, query: '', page: 1 }));
+            }}
           />
 
           <div className="flex flex-wrap items-center gap-3">
@@ -434,7 +475,13 @@ export function ContractsContent() {
           </p>
           <button
             type="button"
-            onClick={clearAllFilters}
+            onClick={() => {
+              logEvent('search_performed', {
+                keyword: '',
+                action: 'clear_all_filters',
+              });
+              clearAllFilters();
+            }}
             className="px-4 py-2 rounded-lg border border-border text-foreground hover:bg-accent transition-colors"
           >
             Clear all filters

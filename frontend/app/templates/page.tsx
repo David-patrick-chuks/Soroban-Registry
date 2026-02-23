@@ -5,15 +5,26 @@ import { api } from '@/lib/api';
 import TemplateGallery from '@/components/TemplateGallery';
 import { Sparkles, Terminal } from 'lucide-react';
 import Navbar from '@/components/Navbar';
+import { useAnalytics } from '@/hooks/useAnalytics';
+import { useEffect } from 'react';
 
 export default function TemplatesPage() {
-    const { data: templates, isLoading } = useQuery({
+    const { data: templates, isLoading, error } = useQuery({
         queryKey: ['templates'],
         queryFn: () => api.getTemplates(),
     });
+    const { logEvent } = useAnalytics();
+
+    useEffect(() => {
+        if (!error) return;
+        logEvent('error_event', {
+            source: 'templates_page',
+            message: 'Failed to load templates',
+        });
+    }, [error, logEvent]);
 
     return (
-        <div className="min-h-screen bg-linear-to-br from-gray-50 via-blue-50/30 to-purple-50/30 dark:from-gray-950 dark:via-blue-900/10 dark:to-purple-900/10">
+        <div className="min-h-screen bg-gradient-to-br from-gray-50 via-blue-50/30 to-purple-50/30 dark:from-gray-950 dark:via-blue-900/10 dark:to-purple-900/10">
             <Navbar />
 
             <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">

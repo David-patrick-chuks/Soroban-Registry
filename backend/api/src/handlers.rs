@@ -17,6 +17,7 @@ use shared::{
     CreateInteractionBatchRequest, CreateInteractionRequest, DeploymentStats,
     InteractionsListResponse, InteractionsQueryParams, InteractorStats, Network, NetworkConfig,
     PaginatedResponse, PublishRequest, Publisher, SemVer, TimelineEntry, TopUser,
+    ContractChangelogEntry, ContractChangelogResponse,
 };
 use uuid::Uuid;
 
@@ -436,6 +437,76 @@ pub async fn get_contract_versions(
     .map_err(|err| db_internal_error("get contract versions", err))?;
 
     Ok(Json(versions))
+}
+
+/// GET /api/contracts/:id/changelog (and /contracts/:id/changelog) — release history with breaking-change markers.
+pub async fn get_contract_changelog(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> ApiResult<Json<ContractChangelogResponse>> {
+    let (contract_uuid, contract_id) = fetch_contract_identity(&state, &id).await?;
+
+    // Ascending order makes it easy to compute diffs against the previous version.
+    let versions: Vec<ContractVersion> = sqlx::query_as(
+        "SELECT * FROM contract_versions WHERE contract_id = $1 ORDER BY created_at ASC",
+    )
+    .bind(contract_uuid)
+    .fetch_all(&state.db)
+    .await
+    .map_err(|err| db_internal_error("get contract versions for changelog", err))?;
+
+    let mut entries: Vec<ContractChangelogEntry> = Vec::with_capacity(versions.len());
+
+    let mut prev_version: Option<String> = None;
+    for v in &versions {
+        let mut breaking = false;
+        let mut breaking_changes: Vec<String> = Vec::new();
+
+        if let Some(prev) = prev_version.as_deref() {
+            let old_selector = format!("{}@{}", contract_id, prev);
+            let new_selector = format!("{}@{}", contract_id, v.version);
+
+            let old_abi = resolve_abi(&state, &old_selector).await?;
+            let new_abi = resolve_abi(&state, &new_selector).await?;
+
+            let old_spec = crate::type_safety::parser::parse_json_spec(&old_abi, &old_selector)
+                .map_err(|e| {
+                    ApiError::bad_request("InvalidABI", format!("Failed to parse old ABI: {}", e))
+                })?;
+            let new_spec = crate::type_safety::parser::parse_json_spec(&new_abi, &new_selector)
+                .map_err(|e| {
+                    ApiError::bad_request("InvalidABI", format!("Failed to parse new ABI: {}", e))
+                })?;
+
+            let changes = diff_abi(&old_spec, &new_spec);
+            breaking = has_breaking_changes(&changes);
+            breaking_changes = changes
+                .into_iter()
+                .filter(|c| c.severity == crate::breaking_changes::ChangeSeverity::Breaking)
+                .map(|c| c.message)
+                .collect();
+        }
+
+        entries.push(ContractChangelogEntry {
+            version: v.version.clone(),
+            created_at: v.created_at,
+            commit_hash: v.commit_hash.clone(),
+            source_url: v.source_url.clone(),
+            release_notes: v.release_notes.clone(),
+            breaking,
+            breaking_changes,
+        });
+
+        prev_version = Some(v.version.clone());
+    }
+
+    // Most APIs return newest-first for timelines.
+    entries.reverse();
+
+    Ok(Json(ContractChangelogResponse {
+        contract_id: contract_uuid,
+        entries,
+    }))
 }
 
 pub async fn create_contract_version(

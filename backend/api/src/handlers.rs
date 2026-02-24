@@ -12,11 +12,12 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::{json, Value};
 use shared::{
-    AnalyticsEventType, ChangePublisherRequest, Contract, ContractAnalyticsResponse,
-    ContractGetResponse, ContractInteractionResponse, ContractSearchParams, ContractVersion,
-    CreateContractVersionRequest, CreateInteractionBatchRequest, CreateInteractionRequest,
-    DeploymentStats, InteractionsListResponse, InteractionsQueryParams, InteractorStats, Network,
-    NetworkConfig, PaginatedResponse, PublishRequest, Publisher, SemVer, TimelineEntry, TopUser,
+    pagination::Cursor, AnalyticsEventType, ChangePublisherRequest, Contract,
+    ContractAnalyticsResponse, ContractGetResponse, ContractInteractionResponse,
+    ContractSearchParams, ContractVersion, CreateContractVersionRequest,
+    CreateInteractionBatchRequest, CreateInteractionRequest, DeploymentStats,
+    InteractionsListResponse, InteractionsQueryParams, InteractorStats, Network, NetworkConfig,
+    PaginatedResponse, PublishRequest, Publisher, SemVer, TimelineEntry, TopUser,
     UpdateContractMetadataRequest, UpdateContractStatusRequest, VerifyRequest,
 };
 use std::time::Duration;
@@ -231,9 +232,17 @@ pub async fn list_contracts(
         Err(err) => return map_query_rejection(err).into_response(),
     };
 
-    let page = params.page.unwrap_or(1).max(1);
     let limit = params.limit.unwrap_or(20).clamp(1, 100);
-    let offset = (page - 1).max(0) * limit;
+
+    // Cursor logic
+    let cursor = params.cursor.as_ref().and_then(|c| Cursor::decode(c).ok());
+
+    let (page, offset) = if cursor.is_some() {
+        (1, 0) // Ignore page/offset if cursor is present
+    } else {
+        let p = params.page.unwrap_or(1).max(1);
+        (p, (p - 1).max(0) * limit)
+    };
 
     let sort_by = params.sort_by.clone().unwrap_or_else(|| {
         if params.query.is_some() {
@@ -243,6 +252,8 @@ pub async fn list_contracts(
         }
     });
     let sort_order = params.sort_order.clone().unwrap_or(shared::SortOrder::Desc);
+
+    let is_timestamp_sort = matches!(sort_by, shared::SortBy::CreatedAt);
 
     // Build dynamic query with aggregations
     let mut query = String::from(
@@ -295,6 +306,26 @@ pub async fn list_contracts(
         count_query.push_str(&network_clause);
     }
 
+    // Apply cursor filter if available and sorting by timestamp
+    if let Some(cursor) = cursor {
+        if is_timestamp_sort {
+            let direction_op = if sort_order == shared::SortOrder::Asc {
+                ">"
+            } else {
+                "<"
+            };
+            let cursor_clause = format!(
+                " AND (c.created_at {} '{}' OR (c.created_at = '{}' AND c.id {} '{}'))",
+                direction_op,
+                cursor.timestamp.to_rfc3339(),
+                cursor.timestamp.to_rfc3339(),
+                direction_op,
+                cursor.id
+            );
+            query.push_str(&cursor_clause);
+        }
+    }
+
     query.push_str(" GROUP BY c.id");
 
     // Sorting logic using aggregations in ORDER BY
@@ -340,11 +371,26 @@ pub async fn list_contracts(
         Err(err) => return db_internal_error("count filtered contracts", err).into_response(),
     };
 
-    (
-        StatusCode::OK,
-        Json(PaginatedResponse::new(contracts, total, page, limit)),
-    )
-        .into_response()
+    let mut response = PaginatedResponse::new(contracts, total, page, limit);
+
+    // Generate next cursor if we have full page
+    if response.items.len() >= limit as usize {
+        if let Some(last) = response.items.last() {
+            let next_cursor = Cursor::new(last.created_at, last.id).encode();
+            response.next_cursor = Some(next_cursor);
+        }
+    }
+
+    // Generate prev cursor if we have items and are not on the first page
+    // (Simplification: if we have a cursor, or page > 1)
+    if params.cursor.is_some() || page > 1 {
+        if let Some(first) = response.items.first() {
+            let prev_cursor = Cursor::new(first.created_at, first.id).encode();
+            response.prev_cursor = Some(prev_cursor);
+        }
+    }
+
+    (StatusCode::OK, Json(response)).into_response()
 }
 
 /// Get a specific contract by ID. Optional ?network= returns network-specific config (Issue #43).
@@ -1687,7 +1733,15 @@ pub async fn get_contract_interactions(
         })?;
 
     let limit = params.limit.clamp(1, 100);
-    let offset = params.offset.max(0);
+
+    // Cursor logic
+    let cursor = params.cursor.as_ref().and_then(|c| Cursor::decode(c).ok());
+
+    let offset = if cursor.is_some() {
+        0
+    } else {
+        params.offset.max(0)
+    };
 
     let from_ts = params
         .from_timestamp
@@ -1710,7 +1764,9 @@ pub async fn get_contract_interactions(
           AND ($3::text IS NULL OR method = $3)
           AND ($4::timestamptz IS NULL OR created_at >= $4)
           AND ($5::timestamptz IS NULL OR created_at <= $5)
-        ORDER BY created_at DESC
+          -- Cursor logic: tie-break with id
+          AND ($8::timestamptz IS NULL OR (created_at < $8 OR (created_at = $8 AND id < $9)))
+        ORDER BY created_at DESC, id DESC
         LIMIT $6 OFFSET $7
         "#,
     )
@@ -1721,6 +1777,8 @@ pub async fn get_contract_interactions(
     .bind(to_ts)
     .bind(limit)
     .bind(offset)
+    .bind(cursor.as_ref().map(|c| c.timestamp))
+    .bind(cursor.as_ref().map(|c| c.id))
     .fetch_all(&state.db)
     .await
     .map_err(|err| db_internal_error("list contract interactions", err))?;
@@ -1757,11 +1815,28 @@ pub async fn get_contract_interactions(
         })
         .collect();
 
+    let next_cursor = if items.len() >= limit as usize {
+        items
+            .last()
+            .map(|last| Cursor::new(last.created_at, last.id).encode())
+    } else {
+        None
+    };
+    let prev_cursor = if params.cursor.is_some() || offset > 0 {
+        items
+            .first()
+            .map(|first| Cursor::new(first.created_at, first.id).encode())
+    } else {
+        None
+    };
+
     Ok(Json(InteractionsListResponse {
         items,
         total,
         limit,
         offset,
+        next_cursor,
+        prev_cursor,
     }))
 }
 

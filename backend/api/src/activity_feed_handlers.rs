@@ -12,7 +12,9 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Duration, Utc};
-use shared::{ActivityFeedParams, AnalyticsEvent, AnalyticsEventType, CursorPaginatedResponse, Network};
+use shared::{
+    ActivityFeedParams, AnalyticsEvent, AnalyticsEventType, CursorPaginatedResponse, Network,
+};
 
 use crate::{error::AppError, state::AppState};
 

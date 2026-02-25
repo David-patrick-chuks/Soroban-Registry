@@ -4,16 +4,9 @@ use axum::{
 };
 
 use crate::{
-    batch_verify_handlers,
-    breaking_changes,
-    compatibility_testing_handlers,
-    custom_metrics_handlers,
-    deprecation_handlers,
-    handlers,
-    metrics_handler,
-    migration_handlers,
-    activity_feed_handlers,
-    state::AppState,
+    activity_feed_handlers, batch_verify_handlers, breaking_changes,
+    compatibility_testing_handlers, custom_metrics_handlers, deprecation_handlers, handlers,
+    metrics_handler, migration_handlers, simulation_handlers, state::AppState,
 };
 
 pub fn observability_routes() -> Router<AppState> {
@@ -22,8 +15,14 @@ pub fn observability_routes() -> Router<AppState> {
 
 pub fn contract_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/contracts", get(handlers::list_contracts).post(handlers::publish_contract))
-        .route("/api/contracts/trending", get(handlers::get_trending_contracts))
+        .route(
+            "/api/contracts",
+            get(handlers::list_contracts).post(handlers::publish_contract),
+        )
+        .route(
+            "/api/contracts/trending",
+            get(handlers::get_trending_contracts),
+        )
         .route("/api/contracts/graph", get(handlers::get_contract_graph))
         .route("/api/contracts/:id", get(handlers::get_contract))
         .route(
@@ -187,6 +186,13 @@ pub fn contract_routes() -> Router<AppState> {
             get(handlers::get_deployment_status),
         )
         .route("/api/deployments/green", post(handlers::deploy_green))
+        .route(
+            "/api/contracts/simulate-deploy",
+            post(simulation_handlers::simulate_deploy),
+        )
+    // TODO: backup_routes, notification_routes, and post_incident_routes
+    // are available in the api library crate but need architectural refactoring
+    // to be integrated with the main AppState
 }
 
 pub fn publisher_routes() -> Router<AppState> {

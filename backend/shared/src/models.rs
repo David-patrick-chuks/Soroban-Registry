@@ -1365,12 +1365,7 @@ pub struct CursorPaginatedResponse<T: Serialize> {
 }
 
 impl<T: Serialize> CursorPaginatedResponse<T> {
-    pub fn new(
-        data: Vec<T>,
-        total: i64,
-        limit: i64,
-        next_cursor: Option<DateTime<Utc>>,
-    ) -> Self {
+    pub fn new(data: Vec<T>, total: i64, limit: i64, next_cursor: Option<DateTime<Utc>>) -> Self {
         let has_more = data.len() as i64 == limit;
         Self {
             has_more,
@@ -1868,7 +1863,7 @@ impl std::fmt::Display for ReleaseNotesStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FunctionChange {
     pub name: String,
-    pub change_type: String, // "added", "removed", "modified"
+    pub change_type: String,
     pub old_signature: Option<String>,
     pub new_signature: Option<String>,
     pub is_breaking: bool,
@@ -1882,7 +1877,6 @@ pub struct DiffSummary {
     pub lines_removed: i32,
     pub function_changes: Vec<FunctionChange>,
     pub has_breaking_changes: bool,
-    /// Category counts: features, fixes, breaking
     pub features_count: i32,
     pub fixes_count: i32,
     pub breaking_count: i32,
@@ -1908,32 +1902,100 @@ pub struct ReleaseNotesGenerated {
 /// Request to auto-generate release notes for a contract version
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateReleaseNotesRequest {
-    /// The version to generate notes for (must already exist in contract_versions)
     pub version: String,
-    /// Optional explicit previous version to diff against.
-    /// If omitted, the latest version before `version` is used automatically.
     pub previous_version: Option<String>,
-    /// URL to the source repository (used for git diff)
     pub source_url: Option<String>,
-    /// Optional raw CHANGELOG.md content to parse
     pub changelog_content: Option<String>,
-    /// Contract address to include in the notes
     pub contract_address: Option<String>,
 }
 
 /// Request to manually edit release notes before publishing
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateReleaseNotesRequest {
-    /// Edited release notes text
     pub notes_text: String,
 }
 
 /// Request to publish (finalize) release notes
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PublishReleaseNotesRequest {
-    /// If true, also update the `release_notes` column on `contract_versions`
     #[serde(default = "default_true")]
     pub update_version_record: bool,
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONTRACT DEPLOYMENT SIMULATION (Issue #256)
+// ═══════════════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulateDeployRequest {
+    pub wasm_binary: String,
+    pub contract_id: String,
+    pub name: String,
+    pub description: Option<String>,
+    pub network: Network,
+    pub category: Option<String>,
+    pub tags: Vec<String>,
+    pub publisher_address: String,
+    #[serde(default)]
+    pub dependencies: Vec<DependencyDeclaration>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationResult {
+    pub valid: bool,
+    pub errors: Vec<SimulationError>,
+    pub warnings: Vec<SimulationWarning>,
+    pub gas_estimate: GasEstimate,
+    pub performance_metrics: PerformanceMetrics,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub abi_preview: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contract_functions: Option<Vec<ContractFunctionInfo>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationError {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulationWarning {
+    pub code: String,
+    pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GasEstimate {
+    pub total_cost_stroops: i64,
+    pub total_cost_xlm: f64,
+    pub wasm_size_kb: f64,
+    pub complexity_factor: f64,
+    pub deployment_cost_stroops: i64,
+    pub storage_cost_stroops: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PerformanceMetrics {
+    pub estimated_execution_time_ms: u64,
+    pub memory_estimate_kb: u64,
+    pub function_count: u32,
+    pub table_size_bytes: u32,
+    pub data_section_bytes: u32,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ContractFunctionInfo {
+    pub name: String,
+    pub param_count: u32,
+    pub return_type: Option<String>,
+    pub is_view: bool,
 }
 
 fn default_true() -> bool {

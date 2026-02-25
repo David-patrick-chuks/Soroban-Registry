@@ -12,8 +12,8 @@ use axum::{
 use std::net::SocketAddr;
 use uuid::Uuid;
 
-use crate::validation::validation_rate_limit::ValidationFailureRateLimiter;
 use crate::security_log;
+use crate::validation::validation_rate_limit::ValidationFailureRateLimiter;
 
 /// Middleware that tracks validation failures for rate limiting
 ///

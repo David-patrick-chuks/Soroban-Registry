@@ -44,19 +44,15 @@ lazy_static! {
 /// Get the configured domain whitelist from environment or use default
 pub fn get_domain_whitelist() -> HashSet<String> {
     match std::env::var("ALLOWED_DOMAINS") {
-        Ok(domains_str) => {
-            domains_str
-                .split(',')
-                .map(|d| d.trim().to_lowercase())
-                .filter(|d| !d.is_empty())
-                .collect()
-        }
-        Err(_) => {
-            DEFAULT_DOMAIN_WHITELIST
-                .iter()
-                .map(|d| d.to_lowercase())
-                .collect()
-        }
+        Ok(domains_str) => domains_str
+            .split(',')
+            .map(|d| d.trim().to_lowercase())
+            .filter(|d| !d.is_empty())
+            .collect(),
+        Err(_) => DEFAULT_DOMAIN_WHITELIST
+            .iter()
+            .map(|d| d.to_lowercase())
+            .collect(),
     }
 }
 
@@ -174,9 +170,7 @@ mod tests {
 
         // HTTP should fail
         assert!(validate_https_url_only("http://example.com").is_err());
-        assert!(
-            validate_https_url_only("http://github.com/stellar/rs-soroban-sdk").is_err()
-        );
+        assert!(validate_https_url_only("http://github.com/stellar/rs-soroban-sdk").is_err());
 
         // FTP should fail
         assert!(validate_https_url_only("ftp://example.com").is_err());
@@ -189,13 +183,11 @@ mod tests {
     #[test]
     fn test_validate_url_with_whitelist() {
         // Should pass with default whitelist
-        assert!(
-            validate_url_https_only_with_whitelist("https://github.com/stellar/rs-soroban-sdk")
-                .is_ok()
-        );
-        assert!(
-            validate_url_https_only_with_whitelist("https://gitlab.com/stellar/sdk").is_ok()
-        );
+        assert!(validate_url_https_only_with_whitelist(
+            "https://github.com/stellar/rs-soroban-sdk"
+        )
+        .is_ok());
+        assert!(validate_url_https_only_with_whitelist("https://gitlab.com/stellar/sdk").is_ok());
 
         // Should fail for non-whitelisted domain
         assert!(validate_url_https_only_with_whitelist("https://example.com").is_err());

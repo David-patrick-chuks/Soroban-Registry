@@ -160,9 +160,7 @@ async fn perform_health_checks(pool: &PgPool, status: &HealthMonitorStatus) -> R
     status
         .contracts_checked
         .fetch_add(checked, Ordering::Relaxed);
-    status
-        .contracts_failed
-        .fetch_add(failed, Ordering::Relaxed);
+    status.contracts_failed.fetch_add(failed, Ordering::Relaxed);
 
     info!(
         checked = checked,
@@ -479,9 +477,18 @@ mod tests {
 
     #[test]
     fn test_health_status_from_str() {
-        assert_eq!("healthy".parse::<HealthStatus>().unwrap(), HealthStatus::Healthy);
-        assert_eq!("warning".parse::<HealthStatus>().unwrap(), HealthStatus::Warning);
-        assert_eq!("critical".parse::<HealthStatus>().unwrap(), HealthStatus::Critical);
+        assert_eq!(
+            "healthy".parse::<HealthStatus>().unwrap(),
+            HealthStatus::Healthy
+        );
+        assert_eq!(
+            "warning".parse::<HealthStatus>().unwrap(),
+            HealthStatus::Warning
+        );
+        assert_eq!(
+            "critical".parse::<HealthStatus>().unwrap(),
+            HealthStatus::Critical
+        );
         assert!("unknown".parse::<HealthStatus>().is_err());
     }
 
@@ -510,10 +517,7 @@ mod tests {
         assert_eq!(health.total_score, 20);
         assert_eq!(health.status, "critical");
         assert!(health.recommendations.iter().any(|r| r.contains("90 days")));
-        assert!(health
-            .recommendations
-            .iter()
-            .any(|r| r.contains("Verify")));
+        assert!(health.recommendations.iter().any(|r| r.contains("Verify")));
     }
 
     #[test]

@@ -58,7 +58,10 @@ impl ValidationFailureRateLimiter {
     /// Create a new rate limiter with explicit configuration
     pub fn new(max_failures: u32, window: Duration) -> Self {
         Self {
-            config: ValidationFailureConfig { max_failures, window },
+            config: ValidationFailureConfig {
+                max_failures,
+                window,
+            },
             buckets: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -143,7 +146,7 @@ pub struct ValidationRateLimitExceeded {
 
 impl ValidationRateLimitExceeded {
     pub fn new(retry_after_seconds: u64) -> Self {
-        use chrono::{Utc, SecondsFormat};
+        use chrono::{SecondsFormat, Utc};
 
         Self {
             error: "TooManyValidationFailures".to_string(),

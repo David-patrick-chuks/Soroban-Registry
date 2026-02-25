@@ -4,9 +4,9 @@
 //! particularly validation failures. Logs are formatted for integration with
 //! ELK, Splunk, and other observability platforms.
 
-use std::net::IpAddr;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use std::net::IpAddr;
 
 /// Security event types
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]

@@ -6,8 +6,8 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::validation::{
-        Validatable, ValidatedJson, FieldError, ValidationBuilder, 
-        validators::*, sanitizers::*, url_validation::*,
+        sanitizers::*, url_validation::*, validators::*, FieldError, Validatable, ValidatedJson,
+        ValidationBuilder,
     };
     use serde::{Deserialize, Serialize};
 
@@ -60,9 +60,7 @@ mod integration_tests {
 
             // Validate source URL if present: HTTPS + whitelist
             if let Some(url) = &self.source_url {
-                builder.check("source_url", || {
-                    validate_url_https_only_with_whitelist(url)
-                });
+                builder.check("source_url", || validate_url_https_only_with_whitelist(url));
             }
 
             // Validate publisher address format
@@ -78,7 +76,7 @@ mod integration_tests {
     }
 
     // Example handler using the validated request:
-    // 
+    //
     // pub async fn publish_contract(
     //     State(state): State<AppState>,
     //     ValidatedJson(req): ValidatedJson<PublishContractRequest>,
@@ -237,7 +235,8 @@ mod integration_tests {
             description: Some("A token contract for Soroban".to_string()),
             version: "1.0.0".to_string(),
             source_url: Some("https://github.com/stellar/example".to_string()),
-            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L".to_string(),
+            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L"
+                .to_string(),
             tags: vec!["token".to_string(), "defi".to_string()],
         };
 
@@ -252,7 +251,8 @@ mod integration_tests {
             description: None,
             version: "1.0.0".to_string(),
             source_url: None,
-            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L".to_string(),
+            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L"
+                .to_string(),
             tags: vec![],
         };
 
@@ -270,7 +270,8 @@ mod integration_tests {
             description: Some("<b>Bold</b> description".to_string()),
             version: "1.0.0".to_string(),
             source_url: None,
-            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L".to_string(),
+            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L"
+                .to_string(),
             tags: vec![],
         };
 
@@ -290,7 +291,8 @@ mod integration_tests {
             description: None,
             version: "1.0.0".to_string(),
             source_url: Some("http://untrusted.com/repo".to_string()), // HTTP not allowed
-            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L".to_string(),
+            publisher_address: "GBRPYHIL2CI3WHZSRXG5ZRAML54KVXVP5JUDLHTCHHYDAYCOPREA5Z5L"
+                .to_string(),
             tags: vec![],
         };
 
@@ -304,7 +306,8 @@ mod integration_tests {
     fn test_verify_contract_request_normalized() {
         let mut req = VerifyContractRequest {
             contract_id: "  cdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc  ".to_string(),
-            publisher_address: "  gbrpyhil2ci3whzsrxg5zraml54kvxvp5judlhtchhydaycoprea5z5l  ".to_string(),
+            publisher_address: "  gbrpyhil2ci3whzsrxg5zraml54kvxvp5judlhtchhydaycoprea5z5l  "
+                .to_string(),
             source_url: "https://github.com/stellar/example".to_string(),
             checksum: "abc123def456".to_string(),
         };

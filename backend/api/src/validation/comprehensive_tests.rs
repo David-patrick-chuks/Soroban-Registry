@@ -10,9 +10,8 @@
 #[cfg(test)]
 mod tests {
     use crate::validation::{
-        validators::*, sanitizers::*, ValidationBuilder, ValidationError,
-        FieldError,
-        url_validation::*,
+        sanitizers::*, url_validation::*, validators::*, FieldError, ValidationBuilder,
+        ValidationError,
     };
 
     // ============================================================================
@@ -42,12 +41,21 @@ mod tests {
     fn test_contract_id_invalid_format() {
         let invalid_ids = vec![
             ("", "empty"),
-            ("GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "starts with G"),
+            (
+                "GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                "starts with G",
+            ),
             ("CDLZFC3SYJYDZT7K67VZ75", "too short"),
-            ("cdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc", "lowercase"),
+            (
+                "cdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc",
+                "lowercase",
+            ),
             ("CABC123", "too short"),
             ("C", "single char"),
-            ("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC!", "invalid char"),
+            (
+                "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC!",
+                "invalid char",
+            ),
         ];
 
         for (id, description) in invalid_ids {
@@ -71,8 +79,14 @@ mod tests {
     #[test]
     fn test_contract_id_with_whitespace() {
         // Should trim whitespace
-        assert!(validate_contract_id("  CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC  ").is_ok());
-        assert!(validate_contract_id("\tCDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC\n").is_ok());
+        assert!(validate_contract_id(
+            "  CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC  "
+        )
+        .is_ok());
+        assert!(validate_contract_id(
+            "\tCDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC\n"
+        )
+        .is_ok());
     }
 
     // ============================================================================
@@ -101,11 +115,26 @@ mod tests {
     fn test_stellar_address_typos_detected() {
         // Common typos and variations
         let invalid_addresses = vec![
-            ("CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC", "starts with C (contract ID)"),
-            ("GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSY", "wrong last char"),
-            ("gdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc", "lowercase"),
-            ("GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYS", "too short"),
-            ("GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSCD", "too long"),
+            (
+                "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC",
+                "starts with C (contract ID)",
+            ),
+            (
+                "GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSY",
+                "wrong last char",
+            ),
+            (
+                "gdlzfc3syjydzt7k67vz75hpjvieuvnixf47zg2fb2rmqqvu2hhgcysc",
+                "lowercase",
+            ),
+            (
+                "GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYS",
+                "too short",
+            ),
+            (
+                "GDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSCD",
+                "too long",
+            ),
             ("", "empty"),
         ];
 
@@ -190,7 +219,10 @@ mod tests {
         // HTTP should fail
         assert!(validate_https_url_only("http://github.com").is_err());
         let error = validate_https_url_only("http://example.com").unwrap_err();
-        assert!(error.contains("HTTPS"), "Error should mention HTTPS requirement");
+        assert!(
+            error.contains("HTTPS"),
+            "Error should mention HTTPS requirement"
+        );
 
         // Other protocols should fail
         assert!(validate_https_url_only("ftp://example.com").is_err());
@@ -225,11 +257,7 @@ mod tests {
 
         for url in non_whitelisted {
             let result = validate_url_https_only_with_whitelist(url);
-            assert!(
-                result.is_err(),
-                "Non-whitelisted URL '{}' should fail",
-                url
-            );
+            assert!(result.is_err(), "Non-whitelisted URL '{}' should fail", url);
             let error = result.unwrap_err();
             assert!(
                 error.contains("not whitelisted"),
@@ -256,7 +284,12 @@ mod tests {
 
         for (input, expected) in test_cases {
             let result = strip_html(input);
-            assert_eq!(result.trim(), expected, "HTML stripping failed for '{}'", input);
+            assert_eq!(
+                result.trim(),
+                expected,
+                "HTML stripping failed for '{}'",
+                input
+            );
         }
     }
 
@@ -271,8 +304,14 @@ mod tests {
         for input in inputs {
             let result = sanitize_name(input);
             // Should not contain HTML tags
-            assert!(!result.contains('<'), "Sanitized name should not contain '<'");
-            assert!(!result.contains('>'), "Sanitized name should not contain '>'");
+            assert!(
+                !result.contains('<'),
+                "Sanitized name should not contain '<'"
+            );
+            assert!(
+                !result.contains('>'),
+                "Sanitized name should not contain '>'"
+            );
         }
     }
 
@@ -288,7 +327,7 @@ mod tests {
     #[test]
     fn test_text_field_max_length() {
         let max_length = 5000;
-        
+
         // Valid length
         let valid_text = "a".repeat(5000);
         assert!(validate_length(&valid_text, 1, max_length).is_ok());
@@ -307,17 +346,17 @@ mod tests {
     #[test]
     fn test_validation_builder_accumulates_errors() {
         let mut builder = ValidationBuilder::new();
-        
+
         builder.check("field1", || validate_contract_id("invalid"));
         builder.check("field2", || validate_stellar_address("invalid"));
         builder.check("field3", || validate_semver("invalid"));
 
         let result = builder.build();
         assert!(result.is_err());
-        
+
         let errors = result.unwrap_err();
         assert_eq!(errors.len(), 3, "Should have 3 errors");
-        
+
         let field_names: Vec<_> = errors.iter().map(|e| e.field.as_str()).collect();
         assert_eq!(field_names, vec!["field1", "field2", "field3"]);
     }
@@ -325,10 +364,10 @@ mod tests {
     #[test]
     fn test_validation_builder_error_messages() {
         let mut builder = ValidationBuilder::new();
-        
+
         builder.check("contract_id", || validate_contract_id("GABC123"));
         let result = builder.build();
-        
+
         let errors = result.unwrap_err();
         assert_eq!(errors[0].field, "contract_id");
         assert!(!errors[0].message.is_empty());
@@ -407,7 +446,10 @@ mod tests {
     fn test_max_payload_size_calculation() {
         // Default is 5MB
         let max_bytes = 5 * 1024 * 1024;
-        assert_eq!(crate::validation::payload_size::get_max_payload_bytes(), max_bytes);
+        assert_eq!(
+            crate::validation::payload_size::get_max_payload_bytes(),
+            max_bytes
+        );
     }
 
     // ============================================================================

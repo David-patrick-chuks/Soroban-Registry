@@ -988,11 +988,12 @@ async fn fetch_contract_network(
     contract_id_raw: &str,
     operation: &str,
 ) -> ApiResult<Network> {
-    let network: Option<Network> = sqlx::query_scalar("SELECT network FROM contracts WHERE id = $1")
-        .bind(contract_uuid)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|err| db_internal_error(operation, err))?;
+    let network: Option<Network> =
+        sqlx::query_scalar("SELECT network FROM contracts WHERE id = $1")
+            .bind(contract_uuid)
+            .fetch_optional(&state.db)
+            .await
+            .map_err(|err| db_internal_error(operation, err))?;
 
     network.ok_or_else(|| {
         ApiError::not_found(
@@ -2543,7 +2544,10 @@ pub async fn post_contract_interactions_batch(
         let interaction_type =
             parse_interaction_type(i.interaction_type.as_deref(), i.method.as_deref())?;
         let created_at = i.timestamp.unwrap_or_else(chrono::Utc::now);
-        let network = i.network.clone().unwrap_or_else(|| contract_network.clone());
+        let network = i
+            .network
+            .clone()
+            .unwrap_or_else(|| contract_network.clone());
         let interaction_id = record_contract_interaction(
             &state.db,
             ContractInteractionInsert {

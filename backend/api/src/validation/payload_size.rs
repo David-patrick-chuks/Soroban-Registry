@@ -14,11 +14,11 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
+use chrono::{SecondsFormat, Utc};
 use serde::Serialize;
 use serde_json::json;
 use std::net::SocketAddr;
 use uuid::Uuid;
-use chrono::{Utc, SecondsFormat};
 
 const DEFAULT_MAX_PAYLOAD_MB: u64 = 5;
 const HEADER_CONTENT_LENGTH: &str = "content-length";
@@ -70,7 +70,7 @@ pub async fn payload_size_validation_middleware(
                         .as_ref()
                         .map(|p| p.as_str())
                         .unwrap_or("unknown");
-                    
+
                     crate::security_log::log_payload_too_large(
                         client_ip,
                         size as usize,

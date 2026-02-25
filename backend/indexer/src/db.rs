@@ -1,12 +1,11 @@
+use crate::rpc::ContractDeployment;
 /// Database writer module
 /// Handles writing detected contracts to the database
-
 use shared::{Contract, Network};
 use sqlx::{PgPool, Row};
 use thiserror::Error;
-use uuid::Uuid;
 use tracing::{debug, error, info};
-use crate::rpc::ContractDeployment;
+use uuid::Uuid;
 
 #[derive(Error, Debug)]
 pub enum DatabaseError {
@@ -67,15 +66,14 @@ impl DatabaseWriter {
         }
 
         // Create a publisher record for the deployer if it doesn't exist
-        let publisher_id = self
-            .get_or_create_publisher(&deployment.deployer)
-            .await?;
+        let publisher_id = self.get_or_create_publisher(&deployment.deployer).await?;
 
         // Insert new contract with is_verified = false
         let contract_id = Uuid::new_v4();
         let now = chrono::Utc::now();
 
-        sqlx::query(r#"
+        sqlx::query(
+            r#"
             INSERT INTO contracts (
                 id,
                 contract_id,
@@ -87,25 +85,74 @@ impl DatabaseWriter {
                 created_at,
                 updated_at
             ) VALUES ($1, $2, $3, $4, $5, $6::network_type, $7, $8, $9)
-        "#)
-            .bind(contract_id)
-            .bind(&deployment.contract_id)
-            .bind(format!("{}_{}", deployment.contract_id, deployment.op_id))
-            .bind(&deployment.contract_id)
-            .bind(publisher_id)
-            .bind(network_str)
-            .bind(false)
-            .bind(now)
-            .bind(now)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| {
-                error!(
-                    "Failed to insert contract record: {} ({})",
-                    deployment.contract_id, e
-                );
-                DatabaseError::SqlError(e.to_string())
-            })?;
+        "#,
+        )
+        .bind(contract_id)
+        .bind(&deployment.contract_id)
+        .bind(format!("{}_{}", deployment.contract_id, deployment.op_id))
+        .bind(&deployment.contract_id)
+        .bind(publisher_id)
+        .bind(network_str)
+        .bind(false)
+        .bind(now)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to insert contract record: {} ({})",
+                deployment.contract_id, e
+            );
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO contract_interactions
+              (
+                contract_id, user_address, interaction_type, transaction_hash,
+                method, parameters, return_value, interaction_timestamp, interaction_count, network, created_at
+              )
+            VALUES ($1, $2, 'deploy', NULL, NULL, NULL, NULL, $3, 1, $4::network_type, $3)
+            "#,
+        )
+        .bind(contract_id)
+        .bind(Some(deployment.deployer.as_str()))
+        .bind(now)
+        .bind(network_str)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to insert deploy interaction for contract {}: {}",
+                deployment.contract_id, e
+            );
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
+        sqlx::query(
+            r#"
+            INSERT INTO contract_interaction_daily_aggregates
+              (contract_id, interaction_type, network, day, count, updated_at)
+            VALUES ($1, 'deploy', $2::network_type, $3, 1, NOW())
+            ON CONFLICT (contract_id, interaction_type, network, day)
+            DO UPDATE SET
+              count = contract_interaction_daily_aggregates.count + 1,
+              updated_at = NOW()
+            "#,
+        )
+        .bind(contract_id)
+        .bind(network_str)
+        .bind(now.date_naive())
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to update deploy daily aggregate for contract {}: {}",
+                deployment.contract_id, e
+            );
+            DatabaseError::SqlError(e.to_string())
+        })?;
 
         info!(
             "Contract record created: contract_id={}, network={}, publisher={}",
@@ -121,19 +168,75 @@ impl DatabaseWriter {
         deployments: &[ContractDeployment],
         network: &Network,
     ) -> Result<(usize, usize), DatabaseError> {
+        if deployments.is_empty() {
+            return Ok((0, 0));
+        }
+
+        let mut tx = self.pool.begin().await.map_err(|e| {
+            error!("Failed to begin transaction: {}", e);
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
         let mut new_count = 0;
         let mut duplicate_count = 0;
+        let network_str = network_to_str(network);
+        let now = chrono::Utc::now();
 
-        for deployment in deployments {
-            match self.write_contract(deployment, network).await {
-                Ok(true) => new_count += 1,
-                Ok(false) => duplicate_count += 1,
-                Err(e) => {
-                    error!("Failed to write contract: {}, error: {}", deployment.contract_id, e);
-                    // Continue with next contract, don't fail the entire batch
-                }
-            }
+        // 1. Resolve all publishers first
+        let deployers: std::collections::HashSet<&str> =
+            deployments.iter().map(|d| d.deployer.as_str()).collect();
+
+        let mut publisher_map = std::collections::HashMap::new();
+
+        for deployer in deployers {
+            let publisher_id = self.get_or_create_publisher_tx(&mut tx, deployer).await?;
+            publisher_map.insert(deployer, publisher_id);
         }
+
+        // 2. Perform batch insert for contracts
+        // We use a loop for now but within the SAME transaction for atomicity.
+        // To satisfy the "single multi-row INSERT" request, we use QueryBuilder.
+        use sqlx::QueryBuilder;
+
+        // Note: ON CONFLICT DO NOTHING handles duplicates gracefully
+        let mut query_builder: QueryBuilder<sqlx::Postgres> = QueryBuilder::new(
+            "INSERT INTO contracts (id, contract_id, wasm_hash, name, publisher_id, network, is_verified, created_at, updated_at) "
+        );
+
+        query_builder.push_values(deployments.iter(), |mut b, deployment| {
+            let publisher_id = publisher_map.get(deployment.deployer.as_str()).unwrap();
+            let wasm_hash = format!("{}_{}", deployment.contract_id, deployment.op_id);
+            b.push_bind(Uuid::new_v4())
+                .push_bind(&deployment.contract_id)
+                .push_bind(wasm_hash)
+                .push_bind(&deployment.contract_id)
+                .push_bind(publisher_id)
+                .push_bind(network_str)
+                .push_bind(false)
+                .push_bind(now)
+                .push_bind(now);
+        });
+
+        query_builder.push(" ON CONFLICT (contract_id, network) DO NOTHING RETURNING contract_id");
+
+        let query = query_builder.build();
+        let rows = query.fetch_all(&mut *tx).await.map_err(|e| {
+            error!("Failed to execute batch contract insert: {}", e);
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
+        let inserted_ids: std::collections::HashSet<String> = rows
+            .into_iter()
+            .map(|r| r.get::<String, _>("contract_id"))
+            .collect();
+
+        new_count = inserted_ids.len();
+        duplicate_count = deployments.len() - new_count;
+
+        tx.commit().await.map_err(|e| {
+            error!("Failed to commit transaction: {}", e);
+            DatabaseError::SqlError(e.to_string())
+        })?;
 
         info!(
             "Batch write complete: new={}, duplicates={}",
@@ -141,6 +244,38 @@ impl DatabaseWriter {
         );
 
         Ok((new_count, duplicate_count))
+    }
+
+    /// Get or create a publisher record - transaction version
+    async fn get_or_create_publisher_tx(
+        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        address: &str,
+    ) -> Result<Uuid, DatabaseError> {
+        let now = chrono::Utc::now();
+        let new_id = Uuid::new_v4();
+
+        // Use ON CONFLICT to either insert or get the existing ID
+        let row = sqlx::query(
+            r#"
+            INSERT INTO publishers (id, stellar_address, created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (stellar_address) DO UPDATE
+            SET stellar_address = EXCLUDED.stellar_address
+            RETURNING id
+            "#,
+        )
+        .bind(new_id)
+        .bind(address)
+        .bind(now)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(|e| {
+            error!("Failed to upsert publisher: {}", e);
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
+        Ok(row.get("id"))
     }
 
     /// Get or create a publisher record for a deployer address
@@ -219,7 +354,7 @@ impl DatabaseWriter {
             WHERE network = $1::network_type AND is_verified = false
             ORDER BY created_at DESC
             LIMIT $2
-            "#
+            "#,
         )
         .bind(network_str)
         .bind(limit)

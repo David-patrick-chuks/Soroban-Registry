@@ -160,6 +160,7 @@ fn calculate_health(
 
     // Ensure score is within 0-100
     score = score.clamp(MIN_TOTAL_HEALTH_SCORE, MAX_TOTAL_HEALTH_SCORE);
+    score = score.clamp(0, 100);
 
     let mut recommendations = Vec::new();
 
@@ -176,14 +177,19 @@ fn calculate_health(
 
     match verification_level {
         VerificationLevel::Unverified => {
-            recommendations.push("Verify the contract source code to improve trust and health score.".to_string());
+            recommendations.push(
+                "Verify the contract source code to improve trust and health score.".to_string(),
+            );
         }
         VerificationLevel::Pending => {
             recommendations.push("Contract verification is pending. Health score will improve once verification is complete.".to_string());
         }
         VerificationLevel::Verified => {
             // Optionally recommend an audit
-            recommendations.push("Consider obtaining an external audit to achieve maximum trust and health score.".to_string());
+            recommendations.push(
+                "Consider obtaining an external audit to achieve maximum trust and health score."
+                    .to_string(),
+            );
         }
         VerificationLevel::Audited => {
             // Maximum verification achieved
@@ -297,8 +303,11 @@ mod tests {
         // Unverified penalty: -40. Base 100 -> 60
         let health = calculate_health(&contract, None, VerificationLevel::Unverified);
         assert_eq!(health.total_score, 60);
+
         assert_eq!(health.security_score, 30);
-        assert!(health.recommendations.contains(&"Verify the contract source code to improve trust and health score.".to_string()));
+        assert!(health.recommendations.contains(
+            &"Verify the contract source code to improve trust and health score.".to_string()
+        ));
     }
 
     #[test]
@@ -317,8 +326,10 @@ mod tests {
         // Verified: +0. Base 100 -> 100
         let health = calculate_health(&contract, None, VerificationLevel::Verified);
         assert_eq!(health.total_score, 100);
-        assert_eq!(health.security_score, 50);
-        assert!(health.recommendations.contains(&"Consider obtaining an external audit to achieve maximum trust and health score.".to_string()));
+        assert!(health.recommendations.contains(
+            &"Consider obtaining an external audit to achieve maximum trust and health score."
+                .to_string()
+        ));
     }
 
     #[test]

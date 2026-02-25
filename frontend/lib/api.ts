@@ -1013,6 +1013,9 @@ export const api = {
           body: JSON.stringify(req ?? { update_version_record: true }),
         }),
       `/api/contracts/${id}/release-notes/${version}/publish`
+    );
+  },
+
   // Database Migration Versioning (Issue #252)
   async getMigrationStatus(): Promise<MigrationStatusResponse> {
     return handleApiCall<MigrationStatusResponse>(

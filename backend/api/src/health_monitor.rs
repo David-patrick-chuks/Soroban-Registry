@@ -160,7 +160,6 @@ fn calculate_health(
 
     // Ensure score is within 0-100
     score = score.clamp(MIN_TOTAL_HEALTH_SCORE, MAX_TOTAL_HEALTH_SCORE);
-    score = score.clamp(0, 100);
 
     let mut recommendations = Vec::new();
 

@@ -2,8 +2,10 @@
 //! Hardcoded string storage keys can collide silently and corrupt state.
 //! See `examples/token_fixed.rs` for the recommended typed-key approach.
 
-const STORAGE_KEY_BALANCE: &str = "balance";  // Potential storage key collision
-// i removed const STORAGE_KEY_BALANCE: &str = "balance"; because the duplicate key was a compile error.
+use soroban_sdk::{contract, contractimpl, Address, Env, Symbol};
+
+const STORAGE_KEY_BALANCE: &str = "balance";
+const STORAGE_KEY_ALLOWANCE: &str = "balance";  // Intentional collision with STORAGE_KEY_BALANCE to demonstrate the anti-pattern
 
 
 /// Maximum number of iterations allowed in the mint function.
@@ -11,7 +13,8 @@ const STORAGE_KEY_BALANCE: &str = "balance";  // Potential storage key collision
 /// Soroban contracts are subject to strict CPU instruction limits per transaction.
 const MAX_MINT_ITERATIONS: u64 = 1_000;
 
-pub struct TokenContract;
+#[contract]
+pub struct TokenWithIssues;
 
 #[contractimpl]
 impl TokenWithIssues {
@@ -116,14 +119,14 @@ fn test_transfer() {
 fn test_mint_valid_amount() {
     let env = Env::new();
     // amount = 10, well within the MAX_MINT_ITERATIONS limit
-    TokenContract::mint(env, 10);
+    TokenWithIssues::mint(env, 10);
 }
 
 /// Verifies that minting with the exact MAX_MINT_ITERATIONS amount completes successfully without panicking.
 #[test]
 fn test_mint_exact_limit() {
     let env = Env::new();
-    TokenContract::mint(env, MAX_MINT_ITERATIONS);
+    TokenWithIssues::mint(env, MAX_MINT_ITERATIONS);
 }
 
 /// Mint with amount = 0 must panic (invalid input).
@@ -131,53 +134,49 @@ fn test_mint_exact_limit() {
 #[should_panic(expected = "amount must be greater than zero")]
 fn test_mint_zero_amount() {
     let env = Env::new();
-    TokenContract::mint(env, 0);
+    TokenWithIssues::mint(env, 0);
 }
 
 #[test]
 #[should_panic(expected = "amount exceeds maximum allowed iterations")]
 fn test_mint_exceeds_limit() {
     let env = Env::new();
-    TokenContract::mint(env, MAX_MINT_ITERATIONS + 1);
+    TokenWithIssues::mint(env, MAX_MINT_ITERATIONS + 1);
 }
 
 #[test]
-#[should_panic]
-fn test_reentrancy_guard_blocks_recursive_call() {
-    use soroban_sdk::testutils::Address as AddressTestutils;
+fn hardcoded_keys_collide_and_overwrite_balance() {
+    let env = Env::default();
+    env.mock_all_auths();
 
-    #[test]
-    fn hardcoded_keys_collide_and_overwrite_balance() {
-        let env = Env::default();
-        env.mock_all_auths();
+    let owner = Address::generate(&env);
+    let spender = Address::generate(&env);
 
-        let owner = Address::generate(&env);
-        let spender = Address::generate(&env);
+    TokenWithIssues::set_balance(env.clone(), owner.clone(), 100);
+    assert_eq!(TokenWithIssues::get_balance(env.clone()), 100);
 
-        TokenWithIssues::set_balance(env.clone(), owner.clone(), 100);
-        assert_eq!(TokenWithIssues::get_balance(env.clone()), 100);
+    // Writing allowance overwrites balance because both map to "balance".
+    TokenWithIssues::set_allowance(env.clone(), owner, spender, 7);
 
-        // Writing allowance overwrites balance because both map to "balance".
-        TokenWithIssues::set_allowance(env.clone(), owner, spender, 7);
+    assert_eq!(TokenWithIssues::get_allowance(env.clone()), 7);
+    assert_eq!(TokenWithIssues::get_balance(env), 7);
+}
 
-        assert_eq!(TokenWithIssues::get_allowance(env.clone()), 7);
-        assert_eq!(TokenWithIssues::get_balance(env), 7);
-    }
+#[test]
+fn hardcoded_keys_collide_and_overwrite_allowance() {
+    let env = Env::default();
+    env.mock_all_auths();
 
-    #[test]
-    fn hardcoded_keys_collide_and_overwrite_allowance() {
-        let env = Env::default();
-        env.mock_all_auths();
+    let owner = Address::generate(&env);
 
-        let owner = Address::generate(&env);
+    TokenWithIssues::set_allowance(env.clone(), owner.clone(), owner.clone(), 55);
+    assert_eq!(TokenWithIssues::get_allowance(env.clone()), 55);
 
-        TokenWithIssues::set_allowance(env.clone(), owner.clone(), owner.clone(), 55);
-        assert_eq!(TokenWithIssues::get_allowance(env.clone()), 55);
+    // Writing balance now overwrites what allowance previously stored.
+    TokenWithIssues::set_balance(env.clone(), owner, 12);
 
-        // Writing balance now overwrites what allowance previously stored.
-        TokenWithIssues::set_balance(env.clone(), owner, 12);
+    assert_eq!(TokenWithIssues::get_balance(env.clone()), 12);
+    assert_eq!(TokenWithIssues::get_allowance(env), 12);
+}
 
-        assert_eq!(TokenWithIssues::get_balance(env.clone()), 12);
-        assert_eq!(TokenWithIssues::get_allowance(env), 12);
-    }
 }

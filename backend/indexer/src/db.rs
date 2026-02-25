@@ -143,12 +143,59 @@ impl DatabaseWriter {
         Ok((new_count, duplicate_count))
     }
 
-    /// Get or create a publisher record for a deployer address
+    /// Get or create a publisher record for a deployer address.
+    ///
+    /// ## Bug fix (issue #316)
+    ///
+    /// The original implementation had two problems:
+    ///
+    /// 1. **UUID overwrite / race condition** — the `ON CONFLICT` clause used
+    ///    `DO UPDATE SET id = EXCLUDED.id`, which replaced the existing
+    ///    publisher's primary key with a freshly generated UUID.  Under
+    ///    concurrent load (two calls racing for the same `stellar_address`)
+    ///    this orphaned every `contracts` row that referenced the old `id`.
+    ///
+    ///    Fix: use `DO NOTHING` so the existing row is never touched, then
+    ///    always `SELECT` afterwards to retrieve the canonical `id` — whether
+    ///    the row was just inserted or already existed.
+    ///
+    /// 2. **Fragile UUID decoding** — the existing code read `id` as raw
+    ///    `Vec<u8>` and called `Uuid::from_slice`, which fails when PostgreSQL
+    ///    returns the UUID in its text representation (e.g. when the column is
+    ///    `uuid` type and the driver returns a string).
+    ///
+    ///    Fix: use sqlx's native `Uuid` type via `row.try_get::<Uuid, _>("id")`
+    ///    which handles both binary and text wire formats correctly.
     async fn get_or_create_publisher(&self, address: &str) -> Result<Uuid, DatabaseError> {
         debug!("Getting or creating publisher for address: {}", address);
 
-        // Try to find existing publisher
-        let existing = sqlx::query(
+        let now = chrono::Utc::now();
+        let candidate_id = Uuid::new_v4();
+
+        // Insert a new row only if no row with this stellar_address exists yet.
+        // DO NOTHING ensures we never overwrite the existing publisher's id,
+        // which would orphan all contracts referencing the old id.
+        sqlx::query(
+            r#"
+            INSERT INTO publishers (id, stellar_address, created_at)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (stellar_address) DO NOTHING
+            "#,
+        )
+        .bind(candidate_id)
+        .bind(address)
+        .bind(now)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to upsert publisher: {}", e);
+            DatabaseError::SqlError(e.to_string())
+        })?;
+
+        // Always SELECT the canonical id — whether we just inserted or the row
+        // already existed.  Using sqlx's native Uuid type avoids the fragile
+        // Vec<u8> → Uuid::from_slice conversion that broke on text wire format.
+        let row = sqlx::query(
             r#"
             SELECT id FROM publishers
             WHERE stellar_address = $1
@@ -156,49 +203,19 @@ impl DatabaseWriter {
             "#,
         )
         .bind(address)
-        .fetch_optional(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(|e| {
-            error!("Failed to query publishers: {}", e);
+            error!("Failed to fetch publisher after upsert: {}", e);
             DatabaseError::SqlError(e.to_string())
         })?;
 
-        if let Some(row) = existing {
-            let id_bytes: Vec<u8> = row.try_get("id").map_err(|e| {
-                DatabaseError::SqlError(format!("Failed to extract publisher id: {}", e))
-            })?;
-            let id = Uuid::from_slice(&id_bytes).map_err(|e| {
-                DatabaseError::SqlError(format!("Failed to parse publisher uuid: {}", e))
-            })?;
-            debug!("Found existing publisher: {}", address);
-            return Ok(id);
-        }
-
-        // Create new publisher
-        let publisher_id = Uuid::new_v4();
-        let now = chrono::Utc::now();
-
-        sqlx::query(
-            r#"
-            INSERT INTO publishers (id, stellar_address, created_at)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (stellar_address) DO UPDATE
-            SET id = EXCLUDED.id
-            "#,
-        )
-        .bind(publisher_id)
-        .bind(address)
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            error!("Failed to create publisher: {}", e);
-            DatabaseError::SqlError(e.to_string())
+        let id: Uuid = row.try_get("id").map_err(|e| {
+            DatabaseError::SqlError(format!("Failed to decode publisher uuid: {}", e))
         })?;
 
-        debug!("Created new publisher: {} ({})", address, publisher_id);
-
-        Ok(publisher_id)
+        debug!("Resolved publisher: {} → {}", address, id);
+        Ok(id)
     }
 
     /// Get recently indexed contracts (for verification)
@@ -211,7 +228,7 @@ impl DatabaseWriter {
 
         let rows = sqlx::query_as::<_, Contract>(
             r#"
-            SELECT 
+            SELECT
                 id, contract_id, wasm_hash, name, description,
                 publisher_id, network, is_verified, category, tags,
                 created_at, updated_at

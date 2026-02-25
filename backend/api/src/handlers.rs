@@ -13,12 +13,12 @@ use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::{json, Value};
 use shared::{
     pagination::Cursor, AnalyticsEventType, ChangePublisherRequest, Contract,
-    ContractAnalyticsResponse, ContractGetResponse, ContractInteractionResponse,
-    ContractSearchParams, ContractVersion, CreateContractVersionRequest,
-    CreateInteractionBatchRequest, CreateInteractionRequest, DeploymentStats,
-    InteractionTimeSeriesPoint, InteractionTimeSeriesResponse, InteractionsListResponse,
-    InteractionsQueryParams, InteractorStats, Network, NetworkConfig, PaginatedResponse,
-    PublishRequest, Publisher, SemVer, TimelineEntry, TopUser, TrendingParams,
+    ContractAnalyticsResponse, ContractChangelogEntry, ContractChangelogResponse,
+    ContractGetResponse, ContractInteractionResponse, ContractSearchParams, ContractVersion,
+    CreateContractVersionRequest, CreateInteractionBatchRequest, CreateInteractionRequest,
+    DeploymentStats, InteractionTimeSeriesPoint, InteractionTimeSeriesResponse,
+    InteractionsListResponse, InteractionsQueryParams, InteractorStats, Network, NetworkConfig,
+    PaginatedResponse, PublishRequest, Publisher, SemVer, TimelineEntry, TopUser, TrendingParams,
     UpdateContractMetadataRequest, UpdateContractStatusRequest, VerifyRequest,
 };
 use std::time::Duration;
@@ -57,27 +57,6 @@ fn map_query_rejection(err: QueryRejection) -> ApiError {
         "InvalidQuery",
         format!("Invalid query parameters: {}", err.body_text()),
     )
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, sqlx::Type)]
-#[sqlx(type_name = "contract_audit_event_type", rename_all = "snake_case")]
-pub enum ContractAuditEventType {
-    ContractCreated,
-    MetadataUpdated,
-    VerificationAdded,
-    StatusChanged,
-    PublisherChanged,
-}
-
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
-pub struct ContractAuditLogEntry {
-    pub id: Uuid,
-    pub event_type: ContractAuditEventType,
-    pub contract_id: Uuid,
-    pub user_id: Uuid,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
-    pub changes: serde_json::Value,
-    pub ip_address: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -121,29 +100,93 @@ fn extract_ip_address(headers: &HeaderMap) -> String {
 
 async fn write_contract_audit_log(
     db: &sqlx::PgPool,
-    event_type: ContractAuditEventType,
+    action_type: AuditActionType,
     contract_id: Uuid,
     user_id: Uuid,
     changes: serde_json::Value,
     ip_address: &str,
 ) -> Result<(), sqlx::Error> {
+    let (old_value, new_value) = split_audit_changes(&changes, ip_address);
+
     sqlx::query(
-        "INSERT INTO audit_logs (event_type, contract_id, user_id, changes, ip_address)
+        "INSERT INTO contract_audit_log (action_type, contract_id, old_value, new_value, changed_by)
          VALUES ($1, $2, $3, $4, $5)",
     )
-    .bind(event_type)
+    .bind(action_type)
     .bind(contract_id)
-    .bind(user_id)
-    .bind(changes)
-    .bind(ip_address)
+    .bind(old_value)
+    .bind(new_value)
+    .bind(user_id.to_string())
     .execute(db)
     .await?;
 
-    let _ = sqlx::query_scalar::<_, i64>("SELECT archive_old_audit_logs()")
-        .fetch_one(db)
-        .await?;
-
     Ok(())
+}
+
+fn split_audit_changes(
+    changes: &serde_json::Value,
+    ip_address: &str,
+) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    let mut old_value = serde_json::Map::new();
+    let mut new_value = serde_json::Map::new();
+    let mut saw_before_after_pair = false;
+
+    match changes {
+        serde_json::Value::Object(fields) => {
+            for (field, delta) in fields {
+                match delta {
+                    serde_json::Value::Object(delta_obj) => {
+                        let before = delta_obj.get("before");
+                        let after = delta_obj.get("after");
+
+                        if before.is_some() || after.is_some() {
+                            saw_before_after_pair = true;
+                            if let Some(before) = before {
+                                if !before.is_null() {
+                                    old_value.insert(field.clone(), before.clone());
+                                }
+                            }
+                            if let Some(after) = after {
+                                if !after.is_null() {
+                                    new_value.insert(field.clone(), after.clone());
+                                }
+                            }
+                        } else {
+                            new_value.insert(field.clone(), delta.clone());
+                        }
+                    }
+                    _ => {
+                        new_value.insert(field.clone(), delta.clone());
+                    }
+                }
+            }
+        }
+        _ => {
+            new_value.insert("changes".to_string(), changes.clone());
+        }
+    }
+
+    if !saw_before_after_pair && new_value.is_empty() {
+        new_value.insert("changes".to_string(), changes.clone());
+    }
+
+    new_value.insert(
+        "_ip_address".to_string(),
+        serde_json::Value::String(ip_address.to_string()),
+    );
+
+    let old_value = if old_value.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(old_value))
+    };
+    let new_value = if new_value.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(new_value))
+    };
+
+    (old_value, new_value)
 }
 
 fn parse_interaction_type(
@@ -913,6 +956,48 @@ async fn fetch_contract_identity(state: &AppState, id: &str) -> ApiResult<(Uuid,
     })
 }
 
+async fn ensure_contract_exists(
+    state: &AppState,
+    contract_uuid: Uuid,
+    contract_id_raw: &str,
+    operation: &str,
+) -> ApiResult<()> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM contracts WHERE id = $1)")
+        .bind(contract_uuid)
+        .fetch_one(&state.db)
+        .await
+        .map_err(|err| db_internal_error(operation, err))?;
+
+    if exists {
+        Ok(())
+    } else {
+        Err(ApiError::not_found(
+            "ContractNotFound",
+            format!("No contract found with ID: {}", contract_id_raw),
+        ))
+    }
+}
+
+async fn fetch_contract_network(
+    state: &AppState,
+    contract_uuid: Uuid,
+    contract_id_raw: &str,
+    operation: &str,
+) -> ApiResult<Network> {
+    let network: Option<Network> = sqlx::query_scalar("SELECT network FROM contracts WHERE id = $1")
+        .bind(contract_uuid)
+        .fetch_optional(&state.db)
+        .await
+        .map_err(|err| db_internal_error(operation, err))?;
+
+    network.ok_or_else(|| {
+        ApiError::not_found(
+            "ContractNotFound",
+            format!("No contract found with ID: {}", contract_id_raw),
+        )
+    })
+}
+
 pub async fn publish_contract(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1021,7 +1106,7 @@ pub async fn publish_contract(
 
     write_contract_audit_log(
         &state.db,
-        ContractAuditEventType::ContractCreated,
+        AuditActionType::ContractPublished,
         contract.id,
         publisher.id,
         creation_changes,
@@ -1224,17 +1309,7 @@ pub async fn get_contract_analytics(
         )
     })?;
 
-    let _contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
-        .bind(contract_uuid)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|err| match err {
-            sqlx::Error::RowNotFound => ApiError::not_found(
-                "ContractNotFound",
-                format!("No contract found with ID: {}", id),
-            ),
-            _ => db_internal_error("get contract for analytics", err),
-        })?;
+    ensure_contract_exists(&state, contract_uuid, &id, "get contract for analytics").await?;
 
     let thirty_days_ago = chrono::Utc::now() - chrono::Duration::days(30);
 
@@ -1600,7 +1675,7 @@ pub async fn verify_contract(
 
             write_contract_audit_log(
                 &state.db,
-                ContractAuditEventType::VerificationAdded,
+                AuditActionType::VerificationChanged,
                 contract.id,
                 contract.publisher_id,
                 verification_changes,
@@ -1616,7 +1691,7 @@ pub async fn verify_contract(
                 });
                 write_contract_audit_log(
                     &state.db,
-                    ContractAuditEventType::StatusChanged,
+                    AuditActionType::VerificationChanged,
                     contract.id,
                     contract.publisher_id,
                     status_changes,
@@ -1626,31 +1701,31 @@ pub async fn verify_contract(
                 .map_err(|err| db_internal_error("write status_changed audit log", err))?;
             }
 
-    record_contract_interaction(
-        &state.db,
-        contract.id,
-        None,
-        "publish_success",
-        None,
-        Some("verify"),
-        None,
-        None,
-        chrono::Utc::now(),
-        &contract.network,
-    )
-    .await
-    .map_err(|err| db_internal_error("record verification interaction", err))?;
+            record_contract_interaction(
+                &state.db,
+                contract.id,
+                None,
+                "publish_success",
+                None,
+                Some("verify"),
+                None,
+                None,
+                chrono::Utc::now(),
+                &contract.network,
+            )
+            .await
+            .map_err(|err| db_internal_error("record verification interaction", err))?;
 
-    let _ = analytics::record_event(
-        &state.db,
-        AnalyticsEventType::ContractVerified,
-        Some(contract.id),
-        Some(contract.publisher_id),
-        None,
-        Some(&contract.network),
-        Some(json!({ "verification_id": verification_id })),
-    )
-    .await;
+            let _ = analytics::record_event(
+                &state.db,
+                AnalyticsEventType::ContractVerified,
+                Some(contract.id),
+                Some(contract.publisher_id),
+                None,
+                Some(&contract.network),
+                Some(json!({ "verification_id": verification_id })),
+            )
+            .await;
             let _ = analytics::record_event(
                 &state.db,
                 AnalyticsEventType::ContractVerified,
@@ -1697,7 +1772,7 @@ pub async fn verify_contract(
             });
             write_contract_audit_log(
                 &state.db,
-                ContractAuditEventType::VerificationAdded,
+                AuditActionType::VerificationChanged,
                 contract.id,
                 contract.publisher_id,
                 verification_changes,
@@ -1713,7 +1788,7 @@ pub async fn verify_contract(
                 });
                 write_contract_audit_log(
                     &state.db,
-                    ContractAuditEventType::StatusChanged,
+                    AuditActionType::VerificationChanged,
                     contract.id,
                     contract.publisher_id,
                     status_changes,
@@ -1750,7 +1825,7 @@ pub async fn verify_contract(
             });
             write_contract_audit_log(
                 &state.db,
-                ContractAuditEventType::VerificationAdded,
+                AuditActionType::VerificationChanged,
                 contract.id,
                 contract.publisher_id,
                 verification_changes,
@@ -1766,7 +1841,7 @@ pub async fn verify_contract(
                 });
                 write_contract_audit_log(
                     &state.db,
-                    ContractAuditEventType::StatusChanged,
+                    AuditActionType::VerificationChanged,
                     contract.id,
                     contract.publisher_id,
                     status_changes,
@@ -1870,7 +1945,7 @@ pub async fn update_contract_metadata(
     if !changes.is_empty() {
         write_contract_audit_log(
             &state.db,
-            ContractAuditEventType::MetadataUpdated,
+            AuditActionType::MetadataUpdated,
             after.id,
             req.user_id.unwrap_or(before.publisher_id),
             Value::Object(changes.clone()),
@@ -1957,7 +2032,7 @@ pub async fn change_contract_publisher(
         });
         write_contract_audit_log(
             &state.db,
-            ContractAuditEventType::PublisherChanged,
+            AuditActionType::PublisherChanged,
             after.id,
             req.user_id.unwrap_or(before.publisher_id),
             changes,
@@ -2050,7 +2125,7 @@ pub async fn update_contract_status(
         });
         write_contract_audit_log(
             &state.db,
-            ContractAuditEventType::StatusChanged,
+            AuditActionType::VerificationChanged,
             contract_uuid,
             req.user_id.unwrap_or(contract.publisher_id),
             changes,
@@ -2095,7 +2170,7 @@ pub async fn get_contract_audit_log(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Query(params): Query<AuditLogQuery>,
-) -> ApiResult<Json<Vec<ContractAuditLogEntry>>> {
+) -> ApiResult<Json<Vec<ContractAuditLog>>> {
     let contract_uuid = Uuid::parse_str(&id).map_err(|_| {
         ApiError::bad_request(
             "InvalidContractId",
@@ -2105,7 +2180,7 @@ pub async fn get_contract_audit_log(
     let limit = params.limit.clamp(1, 500);
     let offset = params.offset.max(0);
 
-    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
+    let _contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
         .bind(contract_uuid)
         .fetch_one(&state.db)
         .await
@@ -2116,15 +2191,19 @@ pub async fn get_contract_audit_log(
             ),
             _ => db_internal_error("check contract before audit log query", err),
         })?;
+    ensure_contract_exists(
+        &state,
+        contract_uuid,
+        &id,
+        "check contract before audit log query",
+    )
+    .await?;
 
-    let logs: Vec<ContractAuditLogEntry> = sqlx::query_as(
+    let logs: Vec<ContractAuditLog> = sqlx::query_as(
         r#"
-        SELECT id, event_type, contract_id, user_id, "timestamp", changes, ip_address
-          FROM audit_logs
-         WHERE contract_id = $1
-        UNION ALL
-        SELECT id, event_type, contract_id, user_id, "timestamp", changes, ip_address
-          FROM audit_logs_archive
+        SELECT id, contract_id, action_type, old_value, new_value, changed_by, "timestamp",
+               previous_hash, hash, signature
+          FROM contract_audit_log
          WHERE contract_id = $1
          ORDER BY "timestamp" DESC
          LIMIT $2 OFFSET $3
@@ -2143,17 +2222,15 @@ pub async fn get_contract_audit_log(
 pub async fn get_all_audit_logs(
     State(state): State<AppState>,
     Query(params): Query<AuditLogQuery>,
-) -> ApiResult<Json<Vec<ContractAuditLogEntry>>> {
+) -> ApiResult<Json<Vec<ContractAuditLog>>> {
     let limit = params.limit.clamp(1, 500);
     let offset = params.offset.max(0);
 
-    let logs: Vec<ContractAuditLogEntry> = sqlx::query_as(
+    let logs: Vec<ContractAuditLog> = sqlx::query_as(
         r#"
-        SELECT id, event_type, contract_id, user_id, "timestamp", changes, ip_address
-          FROM audit_logs
-        UNION ALL
-        SELECT id, event_type, contract_id, user_id, "timestamp", changes, ip_address
-          FROM audit_logs_archive
+        SELECT id, contract_id, action_type, old_value, new_value, changed_by, "timestamp",
+               previous_hash, hash, signature
+          FROM contract_audit_log
          ORDER BY "timestamp" DESC
          LIMIT $1 OFFSET $2
         "#,
@@ -2194,17 +2271,7 @@ pub async fn get_contract_interactions(
         )
     })?;
 
-    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
-        .bind(contract_uuid)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|err| match err {
-            sqlx::Error::RowNotFound => ApiError::not_found(
-                "ContractNotFound",
-                format!("No contract found with ID: {}", id),
-            ),
-            _ => db_internal_error("get contract for interactions", err),
-        })?;
+    ensure_contract_exists(&state, contract_uuid, &id, "get contract for interactions").await?;
 
     if let Some(days) = params.days {
         let days = days.clamp(1, 365);
@@ -2257,18 +2324,20 @@ pub async fn get_contract_interactions(
         .map_err(|err| db_internal_error("fetch weekly interaction trend", err))?;
 
         let response = InteractionTimeSeriesResponse {
-            contract_id: contract.id,
+            contract_id: contract_uuid,
             days,
             interactions_this_week,
             interactions_last_week,
             is_trending: (interactions_this_week as f64) > (interactions_last_week as f64 * 1.5),
             series: series_rows
                 .into_iter()
-                .map(|(date, interaction_type, count)| InteractionTimeSeriesPoint {
-                    date,
-                    interaction_type,
-                    count,
-                })
+                .map(
+                    |(date, interaction_type, count)| InteractionTimeSeriesPoint {
+                        date,
+                        interaction_type,
+                        count,
+                    },
+                )
                 .collect(),
         };
 
@@ -2381,14 +2450,14 @@ pub async fn get_contract_interactions(
         None
     };
 
-    Ok(Json(InteractionsListResponse {
+    Ok(Json(json!(InteractionsListResponse {
         items,
         total,
         limit,
         offset,
         next_cursor,
         prev_cursor,
-    }))
+    })))
 }
 
 /// POST /api/contracts/:id/interactions — ingest one interaction.
@@ -2404,22 +2473,13 @@ pub async fn post_contract_interaction(
         )
     })?;
 
-    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
-        .bind(contract_uuid)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|err| match err {
-            sqlx::Error::RowNotFound => ApiError::not_found(
-                "ContractNotFound",
-                format!("No contract found with ID: {}", id),
-            ),
-            _ => db_internal_error("get contract for interaction", err),
-        })?;
+    let contract_network =
+        fetch_contract_network(&state, contract_uuid, &id, "get contract for interaction").await?;
 
     let interaction_type =
         parse_interaction_type(req.interaction_type.as_deref(), req.method.as_deref())?;
     let created_at = req.timestamp.unwrap_or_else(chrono::Utc::now);
-    let network = req.network.unwrap_or_else(|| contract.network.clone());
+    let network = req.network.unwrap_or(contract_network);
     let interaction_id = record_contract_interaction(
         &state.db,
         contract_uuid,
@@ -2460,24 +2520,20 @@ pub async fn post_contract_interactions_batch(
         )
     })?;
 
-    let contract: Contract = sqlx::query_as("SELECT * FROM contracts WHERE id = $1")
-        .bind(contract_uuid)
-        .fetch_one(&state.db)
-        .await
-        .map_err(|err| match err {
-            sqlx::Error::RowNotFound => ApiError::not_found(
-                "ContractNotFound",
-                format!("No contract found with ID: {}", id),
-            ),
-            _ => db_internal_error("get contract for interactions batch", err),
-        })?;
+    let contract_network = fetch_contract_network(
+        &state,
+        contract_uuid,
+        &id,
+        "get contract for interactions batch",
+    )
+    .await?;
 
     let mut ids = Vec::with_capacity(req.interactions.len());
     for i in &req.interactions {
         let interaction_type =
             parse_interaction_type(i.interaction_type.as_deref(), i.method.as_deref())?;
         let created_at = i.timestamp.unwrap_or_else(chrono::Utc::now);
-        let network = i.network.clone().unwrap_or_else(|| contract.network.clone());
+        let network = i.network.clone().unwrap_or_else(|| contract_network.clone());
         let interaction_id = record_contract_interaction(
             &state.db,
             contract_uuid,
@@ -2535,5 +2591,42 @@ mod tests {
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let value = json.0;
         assert_eq!(value["status"], "shutting_down");
+    }
+
+    #[test]
+    fn split_audit_changes_extracts_before_after() {
+        let changes = json!({
+            "name": { "before": "old-name", "after": "new-name" },
+            "description": { "before": "old-desc", "after": "new-desc" },
+            "is_verified": { "before": false, "after": true }
+        });
+
+        let (old_value, new_value) = split_audit_changes(&changes, "127.0.0.1");
+
+        let old = old_value.expect("old_value should be populated");
+        let new = new_value.expect("new_value should be populated");
+        assert_eq!(old["name"], "old-name");
+        assert_eq!(old["description"], "old-desc");
+        assert_eq!(old["is_verified"], false);
+        assert_eq!(new["name"], "new-name");
+        assert_eq!(new["description"], "new-desc");
+        assert_eq!(new["is_verified"], true);
+        assert_eq!(new["_ip_address"], "127.0.0.1");
+    }
+
+    #[test]
+    fn split_audit_changes_preserves_non_diff_payload() {
+        let changes = json!({
+            "status": "verified",
+            "verification_id": "abc123"
+        });
+
+        let (old_value, new_value) = split_audit_changes(&changes, "unknown");
+
+        assert!(old_value.is_none());
+        let new = new_value.expect("new_value should be populated");
+        assert_eq!(new["status"], "verified");
+        assert_eq!(new["verification_id"], "abc123");
+        assert_eq!(new["_ip_address"], "unknown");
     }
 }

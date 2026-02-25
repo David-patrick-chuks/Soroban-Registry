@@ -30,6 +30,7 @@ pub mod signing_handlers;
 mod state;
 mod type_safety;
 mod validation;
+pub mod security_log;
 // mod auth;
 // mod auth_handlers;
 // mod resource_handlers;
@@ -137,7 +138,7 @@ async fn main() -> Result<()> {
     state.cache.clone().warm_up(pool.clone());
 
     let rate_limit_state = RateLimitState::from_env();
-    rate_limit_state.spawn_eviction_task(); 
+    rate_limit_state.spawn_eviction_task();
 
     let allowed_origins = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
         "http://localhost:3000,https://soroban-registry.vercel.app".to_string()
@@ -172,6 +173,8 @@ async fn main() -> Result<()> {
         .nest("/api", activity_feed_routes::routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_tracing::tracing_middleware))
+        .layer(middleware::from_fn(validation::payload_size::payload_size_validation_middleware))
+        .layer(middleware::from_fn(validation::enhanced_extractors::validation_failure_tracking_middleware))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             track_in_flight_middleware,
@@ -239,7 +242,7 @@ async fn main() -> Result<()> {
 
         let start_time = std::time::Instant::now();
         let timeout_duration = std::time::Duration::from_secs(timeout_secs);
-        
+
         let mut success = false;
         loop {
             let in_flight = crate::metrics::HTTP_IN_FLIGHT.get();
@@ -264,7 +267,7 @@ async fn main() -> Result<()> {
 
         tracing::info!("Closing database connections cleanly...");
         pool.close().await;
-        
+
         let shutdown_duration = start_time.elapsed();
         tracing::info!(
             "Shutdown complete. Duration: {}ms",

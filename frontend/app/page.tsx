@@ -5,12 +5,13 @@ import { api } from '@/lib/api';
 import ContractCard from '@/components/ContractCard';
 import { Search, Package, CheckCircle, Users, ArrowRight, Sparkles } from 'lucide-react';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useAnalytics } from '@/hooks/useAnalytics';
 import Navbar from '@/components/Navbar';
 
 export default function Home() {
   const [searchQuery, setSearchQuery] = useState('');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const { logEvent } = useAnalytics();
 
   const { data: stats } = useQuery({
@@ -33,6 +34,30 @@ export default function Home() {
       window.location.href = `/contracts?query=${encodeURIComponent(searchQuery)}`;
     }
   };
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isSlashShortcut = event.key === '/' || event.code === 'Slash';
+      if (!isSlashShortcut || event.ctrlKey || event.metaKey || event.altKey) return;
+
+      const activeElement = document.activeElement as HTMLElement | null;
+      const isTypingField = Boolean(
+        activeElement &&
+        (activeElement.tagName === 'INPUT' ||
+          activeElement.tagName === 'TEXTAREA' ||
+          activeElement.tagName === 'SELECT' ||
+          activeElement.isContentEditable),
+      );
+
+      if (isTypingField) return;
+
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -66,10 +91,13 @@ export default function Home() {
               <div className="relative">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
                 <input
+                  ref={searchInputRef}
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search contracts by name, category, or tag..."
+                  aria-label="Search contracts"
+                  aria-keyshortcuts="/"
                   className="w-full pl-12 pr-4 py-4 rounded-xl border border-border bg-background text-foreground placeholder-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary shadow-lg"
                 />
                 <button

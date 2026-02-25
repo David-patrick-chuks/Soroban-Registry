@@ -1,21 +1,29 @@
-mod commands;
+#![allow(unused_variables)]
+
 mod backup;
+mod batch_verify;
+mod commands;
 mod config;
+mod conversions;
+mod coverage;
 mod events;
 mod export;
+mod formal_verification;
 mod fuzz;
 mod import;
 mod incident;
+mod io_utils;
 mod manifest;
+mod migration;
 mod multisig;
 mod package_signing;
 mod patch;
+mod release_notes;
 mod profiler;
 mod sla;
 mod test_framework;
+mod webhook;
 mod wizard;
-mod formal_verification;
-mod coverage;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};
@@ -54,14 +62,26 @@ pub enum Commands {
         /// Only show verified contracts
         #[arg(long)]
         verified_only: bool,
-		  /// Output results as machine-readable JSON
-		  #[arg(long)]
-		  json: bool,
+        /// Filter by one or more networks (comma-separated: mainnet,testnet,futurenet)
+        #[arg(long)]
+        networks: Option<String>,
+        /// Filter by contract category (e.g. DEX, token, lending, oracle)
+        #[arg(long)]
+        category: Option<String>,
+        /// Maximum number of results to return
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// Number of results to skip (for pagination)
+        #[arg(long, default_value = "0")]
+        offset: usize,
+        /// Output results as machine-readable JSON
+        #[arg(long)]
+        json: bool,
     },
 
     /// Get detailed information about a contract
     Info {
-        /// Contract ID to look up
+        /// Contract registry UUID (use --network for network-specific config)
         contract_id: String,
     },
 
@@ -101,27 +121,38 @@ pub enum Commands {
         /// Maximum number of contracts to show
         #[arg(long, default_value = "10")]
         limit: usize,
-		  #[arg(long)]
+        /// Output results as machine-readable JSON
+        #[arg(long)]
         json: bool,
     },
 
-    /// Migrate a contract to a new WASM
+    /// Detect breaking changes between contract versions
+    BreakingChanges {
+        /// Old contract identifier (UUID or contract_id@version)
+        old_id: String,
+        /// New contract identifier (UUID or contract_id@version)
+        new_id: String,
+        /// Output results as machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Contract state migration assistant
     Migrate {
-        /// Contract ID to migrate
-        #[arg(long)]
-        contract_id: String,
+        #[command(subcommand)]
+        action: MigrateCommands,
+    },
+    /// Analyze upgrades between two contract versions or schema files
+    UpgradeAnalyze {
+        /// Old contract version ID or local schema JSON file
+        old: String,
 
-        /// Path to the new WASM file
-        #[arg(long)]
-        wasm: String,
+        /// New contract version ID or local schema JSON file
+        new: String,
 
-        /// Simulate a migration failure (for testing)
+        /// Output JSON
         #[arg(long)]
-        simulate_fail: bool,
-
-        /// Dry-run: show what would happen without making changes
-        #[arg(long)]
-        dry_run: bool,
+        json: bool,
     },
 
     /// Export a contract archive (.tar.gz)
@@ -157,6 +188,20 @@ pub enum Commands {
         /// Output directory
         #[arg(long, default_value = "docs")]
         output: String,
+    },
+
+    /// Generate OpenAPI 3.0 spec from contract ABI
+    Openapi {
+        /// Path to contract WASM file or ABI JSON file
+        contract_path: String,
+
+        /// Output file path
+        #[arg(long, short = 'o', default_value = "openapi.yaml")]
+        output: String,
+
+        /// Output format: yaml, json, markdown, html
+        #[arg(long, short = 'f', default_value = "yaml")]
+        format: String,
     },
 
     /// Launch the interactive setup wizard
@@ -262,25 +307,25 @@ pub enum Commands {
         #[command(subcommand)]
         action: SlaCommands,
     },
-    
+
     Config {
         #[command(subcommand)]
         action: ConfigSubcommands,
     },
-    
+
     /// Run formal verification analysis against a deployed or local contract
     VerifyFormal {
         /// Path to contract file
         contract_path: String,
-        
+
         /// Path to properties DSL file
         #[arg(long)]
         properties: String,
-        
+
         /// Output format (json or text)
         #[arg(long, default_value = "text")]
         output: String,
-        
+
         /// Post results back to registry
         #[arg(long)]
         post: bool,
@@ -353,14 +398,163 @@ pub enum Commands {
         signature: Option<String>,
     },
 
+    /// Verify a contract binary against an Ed25519 signature locally
+    VerifyContract {
+        /// Path to the contract WASM/binary file
+        wasm_path: String,
+
+        /// Contract ID used when signing
+        #[arg(long)]
+        contract_id: String,
+
+        /// Contract version used when signing
+        #[arg(long)]
+        version: String,
+
+        /// Ed25519 signature (base64)
+        #[arg(long)]
+        signature: String,
+
+        /// Ed25519 public key (base64)
+        #[arg(long)]
+        public_key: String,
+    },
+
     /// Manage signing keys and signatures
     Keys {
         #[command(subcommand)]
         action: KeysCommands,
     },
+
+    /// Verify multiple contracts in a single atomic batch (all succeed or all rollback)
+    BatchVerify {
+        /// Comma-separated list of contract IDs to verify.
+        /// Optionally suffix with @version (e.g. abc123@1.0.0,def456)
+        #[arg(long)]
+        contracts: String,
+
+        /// Stellar address or username initiating the batch (recorded in audit log)
+        #[arg(long)]
+        initiated_by: String,
+
+        /// Output results as machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Manage webhooks for contract lifecycle events
+    Webhook {
+        #[command(subcommand)]
+        action: WebhookCommands,
+    },
+
+    /// Auto-generate and manage release notes for contract versions
+    ReleaseNotes {
+        #[command(subcommand)]
+        action: ReleaseNotesCommands,
+    },
 }
 
-#[derive(Subcommand)]
+/// Sub-commands for the `release-notes` group
+#[derive(Debug, Subcommand)]
+pub enum ReleaseNotesCommands {
+    /// Auto-generate release notes from code diff and changelog
+    Generate {
+        /// Contract registry ID (UUID or on-chain ID)
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to generate notes for (semver, e.g. 1.2.0)
+        #[arg(long)]
+        version: String,
+
+        /// Previous version to diff against (auto-detected if omitted)
+        #[arg(long)]
+        previous_version: Option<String>,
+
+        /// Path to CHANGELOG.md file (auto-detected if present in cwd)
+        #[arg(long)]
+        changelog: Option<String>,
+
+        /// On-chain contract address to include in notes
+        #[arg(long)]
+        contract_address: Option<String>,
+
+        /// Output results as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// View generated release notes for a version
+    View {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to view
+        #[arg(long)]
+        version: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Edit draft release notes before publishing
+    Edit {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to edit
+        #[arg(long)]
+        version: String,
+
+        /// Path to a file containing the new release notes text
+        #[arg(long)]
+        file: Option<String>,
+
+        /// Inline text for the release notes
+        #[arg(long)]
+        text: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Publish (finalize) release notes
+    Publish {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Version to publish
+        #[arg(long)]
+        version: String,
+
+        /// Skip updating the contract_versions.release_notes column
+        #[arg(long)]
+        skip_version_update: bool,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// List all release notes for a contract
+    List {
+        /// Contract registry ID
+        #[arg(long)]
+        contract_id: String,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum ConfigSubcommands {
     Get {
         #[arg(long)]
@@ -396,44 +590,6 @@ pub enum ConfigSubcommands {
         #[arg(long)]
         created_by: String,
     },
-
-    /// Validate a contract function call for type safety
-    ValidateCall {
-        /// Contract ID to validate against
-        contract_id: String,
-        /// Method name to call
-        method_name: String,
-        /// Parameters (positional arguments after method name)
-        #[arg(trailing_var_arg = true)]
-        params: Vec<String>,
-        /// Enable strict mode (no implicit type conversions)
-        #[arg(long)]
-        strict: bool,
-    },
-
-    /// Generate type-safe bindings for a contract
-    GenerateBindings {
-        /// Contract ID to generate bindings for
-        contract_id: String,
-        /// Output language: typescript or rust
-        #[arg(long, default_value = "typescript")]
-        language: String,
-        /// Output file path (defaults to stdout)
-        #[arg(long, short)]
-        output: Option<String>,
-    },
-
-    /// List functions available on a contract
-    ListFunctions {
-        /// Contract ID to list functions for
-        contract_id: String,
-    },
-
-    /// Get trust score for a contract
-    TrustScore {
-        /// Contract UUID to score
-        contract_id: String,
-    },
 }
 
 /// Sub-commands for the `sla` group
@@ -454,11 +610,6 @@ pub enum SlaCommands {
     Status {
         /// Contract identifier
         id: String,
-    },
-    /// Show the trust score and breakdown for a contract
-    TrustScore {
-        /// Contract UUID to score
-        contract_id: String,
     },
 }
 
@@ -557,9 +708,9 @@ pub enum PatchCommands {
         rollout: u8,
     },
     /// Notify subscribers about a patch
-    Notify { 
+    Notify {
         #[arg(long)]
-        patch_id: String 
+        patch_id: String,
     },
     /// Apply a patch to a specific contract
     Apply {
@@ -576,7 +727,6 @@ pub enum PatchCommands {
 }
 
 #[derive(Debug, Subcommand)]
-enum DepsCommands {
 pub enum DepsCommands {
     /// List dependencies for a contract
     List {
@@ -622,6 +772,114 @@ pub enum KeysCommands {
     },
 }
 
+/// Sub-commands for the `webhook` group
+#[derive(Debug, Subcommand)]
+pub enum WebhookCommands {
+    /// Register a new webhook subscription
+    Create {
+        /// Endpoint URL to receive events (must be HTTPS in production)
+        #[arg(long)]
+        url: String,
+
+        /// Comma-separated list of events to subscribe to.
+        /// Valid: contract.published, contract.verified,
+        ///        contract.failed_verification, version.created
+        #[arg(long)]
+        events: String,
+
+        /// Optional HMAC-SHA256 secret key (auto-generated if omitted)
+        #[arg(long)]
+        secret: Option<String>,
+    },
+
+    /// List all registered webhooks
+    List {},
+
+    /// Delete a webhook by ID
+    Delete {
+        /// Webhook ID to delete
+        webhook_id: String,
+    },
+
+    /// Send a test event to a webhook
+    Test {
+        /// Webhook ID to test
+        webhook_id: String,
+    },
+
+    /// View delivery logs for a webhook
+    Logs {
+        /// Webhook ID
+        webhook_id: String,
+
+        /// Maximum number of log entries to show
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+
+    /// Manually retry a dead-letter delivery
+    Retry {
+        /// Delivery ID to retry
+        delivery_id: String,
+    },
+
+    /// Verify a webhook payload signature locally
+    VerifySig {
+        /// HMAC secret key used for signing
+        #[arg(long)]
+        secret: String,
+
+        /// Raw JSON payload body
+        #[arg(long)]
+        payload: String,
+
+        /// Signature header value (e.g. sha256=abc123...)
+        #[arg(long)]
+        signature: String,
+    },
+}
+
+/// Sub-commands for the `migrate` group
+#[derive(Debug, Subcommand)]
+pub enum MigrateCommands {
+    /// Preview migration outcome (dry-run)
+    Preview {
+        old_id: String,
+        new_id: String,
+    },
+    /// Analyze schema differences between versions
+    Analyze {
+        old_id: String,
+        new_id: String,
+    },
+    /// Generate migration script template (rust|js)
+    Generate {
+        old_id: String,
+        new_id: String,
+        #[arg(long, default_value = "rust")]
+        language: String,
+        #[arg(long)]
+        output: Option<String>,
+    },
+    /// Validate migration for data loss risks
+    Validate {
+        old_id: String,
+        new_id: String,
+    },
+    /// Apply migration and record history
+    Apply {
+        old_id: String,
+        new_id: String,
+    },
+    /// Rollback a migration by migration ID
+    Rollback { migration_id: String },
+    /// Show migration history
+    History {
+        #[arg(long, default_value = "20")]
+        limit: usize,
+    },
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
@@ -632,7 +890,7 @@ async fn main() -> Result<()> {
     let log_level = if cli.verbose { "debug" } else { "warn" };
     env_logger::Builder::new()
         .parse_filters(log_level)
-        .format_timestamp(None)       // no timestamps in CLI output
+        .format_timestamp(None) // no timestamps in CLI output
         .format_module_path(cli.verbose) // show module path only in verbose
         .init();
 
@@ -640,56 +898,173 @@ async fn main() -> Result<()> {
     log::debug!("API URL: {}", cli.api_url);
 
     // ── Resolve network ───────────────────────────────────────────────────────
-    let network = config::resolve_network(cli.network)?;
+    let cfg_network = config::resolve_network(cli.network)?;
+    let mut net_str = cfg_network.to_string();
+    if net_str == "auto" { net_str = "mainnet".to_string(); }
+    let network: commands::Network = net_str.parse().unwrap();
     log::debug!("Network: {:?}", network);
 
     match cli.command {
-         Commands::Search { query, verified_only, json } => {
-            log::debug!("Command: search | query={:?} verified_only={}", query, verified_only);
-            ccommands::search(&cli.api_url, &query, network, verified_only, json).await?;
+        Commands::Search {
+            query,
+            verified_only,
+            networks,
+            category,
+            limit,
+            offset,
+            json,
+        } => {
+            let networks_vec: Vec<String> = networks
+                .map(|n| n.split(',').map(|s| s.trim().to_string()).collect())
+                .unwrap_or_default();
+            log::debug!(
+                "Command: search | query={:?} verified_only={} networks={:?} category={:?}",
+                query,
+                verified_only,
+                networks_vec,
+                category
+            );
+            commands::search(
+                &cli.api_url,
+                &query,
+                network,
+                verified_only,
+                networks_vec,
+                category.as_deref(),
+                limit,
+                offset,
+                json,
+            )
+            .await?;
         }
         Commands::Info { contract_id } => {
             log::debug!("Command: info | contract_id={}", contract_id);
-            commands::info(&cli.api_url, &contract_id, network).await?;
+            commands::info(&cli.api_url, &contract_id, cfg_network).await?;
         }
         Commands::Publish {
-            contract_id, name, description, category, tags, publisher,
+            contract_id,
+            name,
+            description,
+            network: _publish_network,
+            category,
+            tags,
+            publisher,
         } => {
             let tags_vec = tags
                 .map(|t| t.split(',').map(|s| s.trim().to_string()).collect())
                 .unwrap_or_default();
             log::debug!(
                 "Command: publish | contract_id={} name={} tags={:?}",
-                contract_id, name, tags_vec
+                contract_id,
+                name,
+                tags_vec
             );
             commands::publish(
-                &cli.api_url, &contract_id, &name,
-                description.as_deref(), network,
-                category.as_deref(), tags_vec, &publisher,
-            ).await?;
+                &cli.api_url,
+                &contract_id,
+                &name,
+                description.as_deref(),
+                network,
+                category.as_deref(),
+                tags_vec,
+                &publisher,
+            )
+            .await?;
         }
-         Commands::List { limit, json } => {
+        Commands::List { limit, json } => {
             log::debug!("Command: list | limit={}", limit);
             commands::list(&cli.api_url, limit, network, json).await?;
         }
-        Commands::Migrate { contract_id, wasm, simulate_fail, dry_run } => {
-            log::debug!(
-                "Command: migrate | contract_id={} wasm={} dry_run={}",
-                contract_id, wasm, dry_run
-            );
-            commands::migrate(&cli.api_url, &contract_id, &wasm, simulate_fail, dry_run).await?;
+        Commands::BreakingChanges { old_id, new_id, json } => {
+            log::debug!("Command: breaking-changes | old={} new={}", old_id, new_id);
+            commands::breaking_changes(&cli.api_url, &old_id, &new_id, json).await?;
         }
-        Commands::Export { id, output, contract_dir } => {
+        Commands::UpgradeAnalyze { old, new, json } => {
+            log::debug!("Command: upgrade analyze | old={} new={}", old, new);
+            commands::upgrade_analyze(&cli.api_url, &old, &new, json).await?;
+        }
+        Commands::Migrate { action } => match action {
+            MigrateCommands::Preview { old_id, new_id } => {
+                log::debug!("Command: migrate preview | old_id={} new_id={}", old_id, new_id);
+                migration::preview(&old_id, &new_id)?;
+            }
+            MigrateCommands::Analyze { old_id, new_id } => {
+                log::debug!("Command: migrate analyze | old_id={} new_id={}", old_id, new_id);
+                migration::analyze(&old_id, &new_id)?;
+            }
+            MigrateCommands::Generate {
+                old_id,
+                new_id,
+                language,
+                output,
+            } => {
+                log::debug!(
+                    "Command: migrate generate | old_id={} new_id={} language={}",
+                    old_id,
+                    new_id,
+                    language
+                );
+                migration::generate_template(&old_id, &new_id, &language, output.as_deref())?;
+            }
+            MigrateCommands::Validate { old_id, new_id } => {
+                log::debug!("Command: migrate validate | old_id={} new_id={}", old_id, new_id);
+                migration::validate(&old_id, &new_id)?;
+            }
+            MigrateCommands::Apply { old_id, new_id } => {
+                log::debug!("Command: migrate apply | old_id={} new_id={}", old_id, new_id);
+                migration::apply(&old_id, &new_id)?;
+            }
+            MigrateCommands::Rollback { migration_id } => {
+                log::debug!("Command: migrate rollback | migration_id={}", migration_id);
+                migration::rollback(&migration_id)?;
+            }
+            MigrateCommands::History { limit } => {
+                log::debug!("Command: migrate history | limit={}", limit);
+                migration::history(limit)?;
+            }
+        },
+        Commands::Export {
+            id,
+            output,
+            contract_dir,
+        } => {
             log::debug!("Command: export | id={} output={}", id, output);
             commands::export(&cli.api_url, &id, &output, &contract_dir).await?;
         }
-        Commands::Import { archive, output_dir } => {
-            log::debug!("Command: import | archive={} output_dir={}", archive, output_dir);
+        Commands::Import {
+            archive,
+            output_dir,
+        } => {
+            log::debug!(
+                "Command: import | archive={} output_dir={}",
+                archive,
+                output_dir
+            );
             commands::import(&cli.api_url, &archive, network, &output_dir).await?;
         }
-        Commands::Doc { contract_path, output } => {
-            log::debug!("Command: doc | contract_path={} output={}", contract_path, output);
+        Commands::Doc {
+            contract_path,
+            output,
+        } => {
+            log::debug!(
+                "Command: doc | contract_path={} output={}",
+                contract_path,
+                output
+            );
             commands::doc(&contract_path, &output)?;
+        }
+        Commands::Openapi {
+            contract_path,
+            output,
+            format,
+        } => {
+            log::debug!(
+                "Command: openapi | contract_path={} output={} format={}",
+                contract_path,
+                output,
+                format
+            );
+            commands::openapi(&contract_path, &output, &format)?;
         }
         Commands::Wizard {} => {
             log::debug!("Command: wizard");
@@ -700,27 +1075,54 @@ async fn main() -> Result<()> {
             wizard::show_history(search.as_deref(), limit)?;
         }
         Commands::Incident { action } => match action {
-            IncidentCommands::Trigger { contract_id, severity } => {
-                log::debug!("Command: incident trigger | contract_id={} severity={}", contract_id, severity);
+            IncidentCommands::Trigger {
+                contract_id,
+                severity,
+            } => {
+                log::debug!(
+                    "Command: incident trigger | contract_id={} severity={}",
+                    contract_id,
+                    severity
+                );
                 commands::incident_trigger(&contract_id, &severity)?;
             }
             IncidentCommands::Update { incident_id, state } => {
-                log::debug!("Command: incident update | incident_id={} state={}", incident_id, state);
+                log::debug!(
+                    "Command: incident update | incident_id={} state={}",
+                    incident_id,
+                    state
+                );
                 commands::incident_update(&incident_id, &state)?;
             }
         },
         Commands::Patch { action } => match action {
-            PatchCommands::Create { version, hash, severity, rollout } => {
+            PatchCommands::Create {
+                version,
+                hash,
+                severity,
+                rollout,
+            } => {
                 let sev = severity.parse::<Severity>()?;
-                log::debug!("Command: patch create | version={} rollout={}", version, rollout);
+                log::debug!(
+                    "Command: patch create | version={} rollout={}",
+                    version,
+                    rollout
+                );
                 commands::patch_create(&cli.api_url, &version, &hash, sev, rollout).await?;
             }
             PatchCommands::Notify { patch_id } => {
                 log::debug!("Command: patch notify | patch_id={}", patch_id);
                 commands::patch_notify(&cli.api_url, &patch_id).await?;
             }
-            PatchCommands::Apply { contract_id, patch_id } => {
-                log::debug!("Command: patch apply | contract_id={} patch_id={}", contract_id, patch_id);
+            PatchCommands::Apply {
+                contract_id,
+                patch_id,
+            } => {
+                log::debug!(
+                    "Command: patch apply | contract_id={} patch_id={}",
+                    contract_id,
+                    patch_id
+                );
                 commands::patch_apply(&cli.api_url, &contract_id, &patch_id).await?;
             }
             PatchCommands::Deps { command } => match command {
@@ -728,40 +1130,73 @@ async fn main() -> Result<()> {
                     commands::deps_list(&cli.api_url, &contract_id).await?;
                 }
             },
-            }
         },
         // ── Multi-sig commands (issue #47) ───────────────────────────────────
         Commands::Multisig { action } => match action {
-            MultisigCommands::CreatePolicy { name, threshold, signers, expiry_secs, created_by } => {
+            MultisigCommands::CreatePolicy {
+                name,
+                threshold,
+                signers,
+                expiry_secs,
+                created_by,
+            } => {
                 let signer_vec: Vec<String> =
                     signers.split(',').map(|s| s.trim().to_string()).collect();
                 log::debug!(
                     "Command: multisig create-policy | name={} threshold={} signers={:?}",
-                    name, threshold, signer_vec
+                    name,
+                    threshold,
+                    signer_vec
                 );
                 multisig::create_policy(
-                    &cli.api_url, &name, threshold, signer_vec, expiry_secs, &created_by,
-                ).await?;
+                    &cli.api_url,
+                    &name,
+                    threshold,
+                    signer_vec,
+                    expiry_secs,
+                    &created_by,
+                )
+                .await?;
             }
             MultisigCommands::CreateProposal {
-                contract_name, contract_id, wasm_hash, network: net_str,
-                policy_id, proposer, description,
+                contract_name,
+                contract_id,
+                wasm_hash,
+                network: net_str,
+                policy_id,
+                proposer,
+                description,
             } => {
                 log::debug!(
                     "Command: multisig create-proposal | contract_id={} policy_id={}",
-                    contract_id, policy_id
+                    contract_id,
+                    policy_id
                 );
                 multisig::create_proposal(
-                    &cli.api_url, &contract_name, &contract_id,
-                    &wasm_hash, &net_str, &policy_id, &proposer,
+                    &cli.api_url,
+                    &contract_name,
+                    &contract_id,
+                    &wasm_hash,
+                    &net_str,
+                    &policy_id,
+                    &proposer,
                     description.as_deref(),
-                ).await?;
+                )
+                .await?;
             }
-            MultisigCommands::Sign { proposal_id, signer, signature_data } => {
+            MultisigCommands::Sign {
+                proposal_id,
+                signer,
+                signature_data,
+            } => {
                 log::debug!("Command: multisig sign | proposal_id={}", proposal_id);
                 multisig::sign_proposal(
-                    &cli.api_url, &proposal_id, &signer, signature_data.as_deref(),
-                ).await?;
+                    &cli.api_url,
+                    &proposal_id,
+                    &signer,
+                    signature_data.as_deref(),
+                )
+                .await?;
             }
             MultisigCommands::Execute { proposal_id } => {
                 log::debug!("Command: multisig execute | proposal_id={}", proposal_id);
@@ -772,7 +1207,11 @@ async fn main() -> Result<()> {
                 multisig::proposal_info(&cli.api_url, &proposal_id).await?;
             }
             MultisigCommands::ListProposals { status, limit } => {
-                log::debug!("Command: multisig list-proposals | status={:?} limit={}", status, limit);
+                log::debug!(
+                    "Command: multisig list-proposals | status={:?} limit={}",
+                    status,
+                    limit
+                );
                 multisig::list_proposals(&cli.api_url, status.as_deref(), limit).await?;
             }
         },
@@ -787,10 +1226,10 @@ async fn main() -> Result<()> {
         } => {
             fuzz::run_fuzzer(
                 &contract_path,
-                &duration,
-                &timeout,
-                threads,
-                max_cases,
+                &duration.to_string(),
+                &timeout.to_string(),
+                threads as usize,
+                max_cases as u64,
                 &output,
                 minimize,
             )
@@ -804,6 +1243,15 @@ async fn main() -> Result<()> {
             compare,
             recommendations,
         } => {
+            log::debug!(
+                "Command: profile | contract_path={} method={:?} output={:?} flamegraph={:?} compare={:?} recommendations={}",
+                contract_path,
+                method,
+                output,
+                flamegraph,
+                compare,
+                recommendations
+            );
             commands::profile(
                 &contract_path,
                 method.as_deref(),
@@ -811,8 +1259,7 @@ async fn main() -> Result<()> {
                 flamegraph.as_deref(),
                 compare.as_deref(),
                 recommendations,
-            )
-            .await?;
+            )?;
         }
         Commands::Test {
             test_file,
@@ -831,49 +1278,108 @@ async fn main() -> Result<()> {
             .await?;
         }
         Commands::Sla { action } => match action {
-            SlaCommands::Record { id, uptime, latency, error_rate } => {
-                log::debug!("Command: sla record | id={} uptime={} latency={} error_rate={}", id, uptime, latency, error_rate);
+            SlaCommands::Record {
+                id,
+                uptime,
+                latency,
+                error_rate,
+            } => {
+                log::debug!(
+                    "Command: sla record | id={} uptime={} latency={} error_rate={}",
+                    id,
+                    uptime,
+                    latency,
+                    error_rate
+                );
                 commands::sla_record(&id, uptime, latency, error_rate)?;
             }
             SlaCommands::Status { id } => {
                 log::debug!("Command: sla status | id={}", id);
                 commands::sla_status(&id)?;
             }
-            SlaCommands::TrustScore { contract_id } => {
-                log::debug!("Command: trust-score | contract_id={}", contract_id);
-                // NOTE: Make sure commands::trust_score isn't expecting `network` since SlaCommands doesn't define it
-                // I removed `network` from the function call here because it wasn't available in scope. 
-                // Adjust if you need to fetch global network config instead.
-                commands::trust_score(&cli.api_url, &contract_id).await?;
-            }
         },
         Commands::Config { action } => match action {
-            ConfigSubcommands::Get { contract_id, environment } => {
+            ConfigSubcommands::Get {
+                contract_id,
+                environment,
+            } => {
                 commands::config_get(&cli.api_url, &contract_id, &environment).await?;
             }
-            ConfigSubcommands::Set { contract_id, environment, config_data, secrets_data, created_by } => {
-                commands::config_set(&cli.api_url, &contract_id, &environment, &config_data, secrets_data.as_deref(), &created_by).await?;
+            ConfigSubcommands::Set {
+                contract_id,
+                environment,
+                config_data,
+                secrets_data,
+                created_by,
+            } => {
+                commands::config_set(
+                    &cli.api_url,
+                    &contract_id,
+                    &environment,
+                    &config_data,
+                    secrets_data.as_deref(),
+                    &created_by,
+                )
+                .await?;
             }
-            ConfigSubcommands::History { contract_id, environment } => {
+            ConfigSubcommands::History {
+                contract_id,
+                environment,
+            } => {
                 commands::config_history(&cli.api_url, &contract_id, &environment).await?;
             }
-            ConfigSubcommands::Rollback { contract_id, environment, version, created_by } => {
-                commands::config_rollback(&cli.api_url, &contract_id, &environment, version, &created_by).await?;
+            ConfigSubcommands::Rollback {
+                contract_id,
+                environment,
+                version,
+                created_by,
+            } => {
+                commands::config_rollback(
+                    &cli.api_url,
+                    &contract_id,
+                    &environment,
+                    version,
+                    &created_by,
+                )
+                .await?;
             }
         },
-        Commands::VerifyFormal { contract_path, properties, output, post } => {
-            formal_verification::run(&cli.api_url, &contract_path, &properties, &output, post).await?;
-        },
-        Commands::ScanDeps { contract_id, dependencies, fail_on_high } => {
+        Commands::VerifyFormal {
+            contract_path,
+            properties,
+            output,
+            post,
+        } => {
+            formal_verification::run(&cli.api_url, &contract_path, &properties, &output, post)
+                .await?;
+        }
+        Commands::ScanDeps {
+            contract_id,
+            dependencies,
+            fail_on_high,
+        } => {
             commands::scan_deps(&cli.api_url, &contract_id, &dependencies, fail_on_high).await?;
         }
-        Commands::Coverage { contract_path, tests, threshold, output } => {
+        Commands::Coverage {
+            contract_path,
+            tests,
+            threshold,
+            output,
+        } => {
             coverage::run(&contract_path, &tests, threshold, &output).await?;
         }
-        Commands::Sign { package, private_key, contract_id, version, expires_at } => {
+        Commands::Sign {
+            package,
+            private_key,
+            contract_id,
+            version,
+            expires_at,
+        } => {
             log::debug!(
                 "Command: sign | package={} contract_id={} version={}",
-                package, contract_id, version
+                package,
+                contract_id,
+                version
             );
             package_signing::sign_package(
                 &cli.api_url,
@@ -882,12 +1388,19 @@ async fn main() -> Result<()> {
                 &contract_id,
                 &version,
                 expires_at.as_deref(),
-            ).await?;
+            )
+            .await?;
         }
-        Commands::Verify { package, contract_id, version, signature } => {
+        Commands::Verify {
+            package,
+            contract_id,
+            version,
+            signature,
+        } => {
             log::debug!(
                 "Command: verify | package={} contract_id={}",
-                package, contract_id
+                package,
+                contract_id
             );
             package_signing::verify_package(
                 &cli.api_url,
@@ -895,36 +1408,204 @@ async fn main() -> Result<()> {
                 &contract_id,
                 version.as_deref(),
                 signature.as_deref(),
-            ).await?;
+            )
+            .await?;
+        }
+        Commands::VerifyContract {
+            wasm_path,
+            contract_id,
+            version,
+            signature,
+            public_key,
+        } => {
+            log::debug!(
+                "Command: verify-contract | wasm_path={} contract_id={} version={}",
+                wasm_path,
+                contract_id,
+                version
+            );
+            package_signing::verify_contract_local(
+                &wasm_path,
+                &contract_id,
+                &version,
+                &signature,
+                &public_key,
+            )?;
         }
         Commands::Keys { action } => match action {
             KeysCommands::Generate {} => {
                 log::debug!("Command: keys generate");
                 package_signing::generate_keypair()?;
             }
-            KeysCommands::Revoke { signature_id, revoked_by, reason } => {
+            KeysCommands::Revoke {
+                signature_id,
+                revoked_by,
+                reason,
+            } => {
                 log::debug!("Command: keys revoke | signature_id={}", signature_id);
                 package_signing::revoke_signature(
                     &cli.api_url,
                     &signature_id,
                     &revoked_by,
                     &reason,
-                ).await?;
+                )
+                .await?;
             }
             KeysCommands::Custody { contract_id } => {
                 log::debug!("Command: keys custody | contract_id={}", contract_id);
                 package_signing::get_chain_of_custody(&cli.api_url, &contract_id).await?;
             }
-            KeysCommands::Log { contract_id, entry_type, limit } => {
+            KeysCommands::Log {
+                contract_id,
+                entry_type,
+                limit,
+            } => {
                 log::debug!("Command: keys log");
                 package_signing::get_transparency_log(
                     &cli.api_url,
                     contract_id.as_deref(),
                     entry_type.as_deref(),
-                    *limit,
-                ).await?;
+                    limit,
+                )
+                .await?;
             }
+        },
+        Commands::BatchVerify {
+            contracts,
+            initiated_by,
+            json,
+        } => {
+            log::debug!(
+                "Command: batch-verify | contracts={} initiated_by={}",
+                contracts,
+                initiated_by
+            );
+            batch_verify::run_batch_verify(&cli.api_url, &contracts, &initiated_by, json).await?;
         }
+        Commands::Webhook { action } => match action {
+            WebhookCommands::Create { url, events, secret } => {
+                let event_list: Vec<String> =
+                    events.split(',').map(|s| s.trim().to_string()).collect();
+                log::debug!("Command: webhook create | url={} events={:?}", url, event_list);
+                webhook::create_webhook(&cli.api_url, &url, event_list, secret.as_deref())
+                    .await?;
+            }
+            WebhookCommands::List {} => {
+                log::debug!("Command: webhook list");
+                webhook::list_webhooks(&cli.api_url).await?;
+            }
+            WebhookCommands::Delete { webhook_id } => {
+                log::debug!("Command: webhook delete | id={}", webhook_id);
+                webhook::delete_webhook(&cli.api_url, &webhook_id).await?;
+            }
+            WebhookCommands::Test { webhook_id } => {
+                log::debug!("Command: webhook test | id={}", webhook_id);
+                webhook::test_webhook(&cli.api_url, &webhook_id).await?;
+            }
+            WebhookCommands::Logs { webhook_id, limit } => {
+                log::debug!("Command: webhook logs | id={} limit={}", webhook_id, limit);
+                webhook::webhook_logs(&cli.api_url, &webhook_id, limit).await?;
+            }
+            WebhookCommands::Retry { delivery_id } => {
+                log::debug!("Command: webhook retry | delivery_id={}", delivery_id);
+                webhook::retry_delivery(&cli.api_url, &delivery_id).await?;
+            }
+            WebhookCommands::VerifySig { secret, payload, signature } => {
+                log::debug!("Command: webhook verify-sig");
+                webhook::verify_signature_cmd(&secret, &payload, &signature)?;
+            }
+        },
+        // ── Release Notes commands ───────────────────────────────────────────
+        Commands::ReleaseNotes { action } => match action {
+            ReleaseNotesCommands::Generate {
+                contract_id,
+                version,
+                previous_version,
+                changelog,
+                contract_address,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes generate | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::generate(
+                    &cli.api_url,
+                    &contract_id,
+                    &version,
+                    previous_version.as_deref(),
+                    changelog.as_deref(),
+                    contract_address.as_deref(),
+                    json,
+                )
+                .await?;
+            }
+            ReleaseNotesCommands::View {
+                contract_id,
+                version,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes view | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::view(&cli.api_url, &contract_id, &version, json).await?;
+            }
+            ReleaseNotesCommands::Edit {
+                contract_id,
+                version,
+                file,
+                text,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes edit | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::edit(
+                    &cli.api_url,
+                    &contract_id,
+                    &version,
+                    file.as_deref(),
+                    text.as_deref(),
+                    json,
+                )
+                .await?;
+            }
+            ReleaseNotesCommands::Publish {
+                contract_id,
+                version,
+                skip_version_update,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes publish | contract_id={} version={}",
+                    contract_id,
+                    version
+                );
+                release_notes::publish(
+                    &cli.api_url,
+                    &contract_id,
+                    &version,
+                    skip_version_update,
+                    json,
+                )
+                .await?;
+            }
+            ReleaseNotesCommands::List {
+                contract_id,
+                json,
+            } => {
+                log::debug!(
+                    "Command: release-notes list | contract_id={}",
+                    contract_id
+                );
+                release_notes::list(&cli.api_url, &contract_id, json).await?;
+            }
+        },
     }
 
     Ok(())

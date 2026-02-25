@@ -3,15 +3,16 @@
 //! Implements cursor-based pagination so clients can scroll through
 //! analytics events without the bugs described in issue #337:
 //!
-//!  • total  = real COUNT(*), not entries.len()
-//!  • page   = removed in favour of next_cursor
-//!  • next_cursor is the created_at of the last returned entry
+//!  • total      = real COUNT(*), not entries.len()
+//!  • page       = removed in favour of next_cursor
+//!  • next_cursor = created_at of the last returned entry
 
 use axum::{
     extract::{Query, State},
     Json,
 };
-use shared::{ActivityFeedParams, AnalyticsEvent, CursorPaginatedResponse};
+use chrono::{DateTime, Duration, Utc};
+use shared::{ActivityFeedParams, AnalyticsEvent, AnalyticsEventType, CursorPaginatedResponse, Network};
 
 use crate::{error::AppError, state::AppState};
 
@@ -21,31 +22,37 @@ use crate::{error::AppError, state::AppState};
 ///   cursor     – ISO-8601 timestamp (from previous response's next_cursor)
 ///   limit      – page size, default 20, capped at 100
 ///   event_type – filter to a single event type
+///   network    – filter to a specific network
+///   days       – how many days back to look (default 7, max 365)
 pub async fn get_activity_feed(
     State(state): State<AppState>,
     Query(mut params): Query<ActivityFeedParams>,
 ) -> Result<Json<CursorPaginatedResponse<AnalyticsEvent>>, AppError> {
-    // ── Clamp limit to a safe maximum ────────────────────────────────────
+    // ── Clamp inputs to safe ranges ───────────────────────────────────────
     if params.limit > 100 {
         params.limit = 100;
     }
+    let days = params.days.unwrap_or(7).clamp(1, 365);
+    let start_time: DateTime<Utc> = Utc::now() - Duration::days(days);
 
-    // ── 1. Real COUNT(*) with the same filters ────────────────────────────
-    //
-    // Mirror the WHERE clause below exactly so total always matches what
-    // the SELECT returns.
+    // ── 1. Real COUNT(*) with identical filters ───────────────────────────
+    //    WHERE clause must mirror the SELECT below exactly.
     let total: i64 = match &params.event_type {
         Some(et) => {
             sqlx::query_scalar(
                 r#"
                 SELECT COUNT(*)
                 FROM   analytics_events
-                WHERE  ($1::timestamptz IS NULL OR created_at < $1)
-                AND    event_type = $2
+                WHERE  created_at >= $1
+                AND    ($2::timestamptz IS NULL OR created_at < $2)
+                AND    event_type = $3
+                AND    ($4::network_type IS NULL OR network = $4)
                 "#,
             )
+            .bind(start_time)
             .bind(params.cursor)
             .bind(et)
+            .bind(&params.network)
             .fetch_one(&state.db)
             .await?
         }
@@ -54,10 +61,14 @@ pub async fn get_activity_feed(
                 r#"
                 SELECT COUNT(*)
                 FROM   analytics_events
-                WHERE  ($1::timestamptz IS NULL OR created_at < $1)
+                WHERE  created_at >= $1
+                AND    ($2::timestamptz IS NULL OR created_at < $2)
+                AND    ($3::network_type IS NULL OR network = $3)
                 "#,
             )
+            .bind(start_time)
             .bind(params.cursor)
+            .bind(&params.network)
             .fetch_one(&state.db)
             .await?
         }
@@ -71,14 +82,18 @@ pub async fn get_activity_feed(
                 SELECT id, event_type, contract_id, user_address,
                        network, metadata, created_at
                 FROM   analytics_events
-                WHERE  ($1::timestamptz IS NULL OR created_at < $1)
-                AND    event_type = $2
+                WHERE  created_at >= $1
+                AND    ($2::timestamptz IS NULL OR created_at < $2)
+                AND    event_type = $3
+                AND    ($4::network_type IS NULL OR network = $4)
                 ORDER  BY created_at DESC
-                LIMIT  $3
+                LIMIT  $5
                 "#,
             )
+            .bind(start_time)
             .bind(params.cursor)
             .bind(et)
+            .bind(&params.network)
             .bind(params.limit)
             .fetch_all(&state.db)
             .await?
@@ -89,12 +104,16 @@ pub async fn get_activity_feed(
                 SELECT id, event_type, contract_id, user_address,
                        network, metadata, created_at
                 FROM   analytics_events
-                WHERE  ($1::timestamptz IS NULL OR created_at < $1)
+                WHERE  created_at >= $1
+                AND    ($2::timestamptz IS NULL OR created_at < $2)
+                AND    ($3::network_type IS NULL OR network = $3)
                 ORDER  BY created_at DESC
-                LIMIT  $2
+                LIMIT  $4
                 "#,
             )
+            .bind(start_time)
             .bind(params.cursor)
+            .bind(&params.network)
             .bind(params.limit)
             .fetch_all(&state.db)
             .await?

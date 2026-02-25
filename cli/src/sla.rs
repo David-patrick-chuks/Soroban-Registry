@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
 use anyhow::{bail, Result};
@@ -75,7 +77,10 @@ impl SlaManager {
             error_rate,
             recorded_at: Utc::now(),
         };
-        self.records.entry(contract_id.to_string()).or_default().push(m);
+        self.records
+            .entry(contract_id.to_string())
+            .or_default()
+            .push(m);
     }
 
     pub fn check_violations(metrics: &SlaMetrics, targets: &SlaTargets) -> Vec<SlaViolation> {

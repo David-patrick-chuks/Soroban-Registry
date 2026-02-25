@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::str::FromStr;
@@ -25,7 +27,10 @@ impl FromStr for IncidentSeverity {
             "high" => Ok(Self::High),
             "medium" => Ok(Self::Medium),
             "low" => Ok(Self::Low),
-            _ => bail!("invalid severity: {} (expected critical|high|medium|low)", s),
+            _ => bail!(
+                "invalid severity: {} (expected critical|high|medium|low)",
+                s
+            ),
         }
     }
 }
@@ -125,7 +130,10 @@ impl IncidentManager {
 
         incident.state = new_state;
 
-        if matches!(new_state, IncidentState::Recovered | IncidentState::PostReview) {
+        if matches!(
+            new_state,
+            IncidentState::Recovered | IncidentState::PostReview
+        ) {
             self.halted.remove(&incident.contract_id);
         }
 

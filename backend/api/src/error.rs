@@ -14,6 +14,12 @@ pub struct ApiError {
     message: String,
 }
 
+impl std::fmt::Display for ApiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {}", self.error, self.message)
+    }
+}
+
 #[derive(Debug, Serialize)]
 struct ErrorResponse {
     error: String,
@@ -50,6 +56,10 @@ impl ApiError {
 
     pub fn unprocessable(error: impl Into<String>, message: impl Into<String>) -> Self {
         Self::new(StatusCode::UNPROCESSABLE_ENTITY, error, message)
+    }
+
+    pub fn conflict(error: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::new(StatusCode::CONFLICT, error, message)
     }
 
     pub fn db_error(message: impl Into<String>) -> Self {

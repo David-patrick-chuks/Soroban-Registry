@@ -1,10 +1,12 @@
 pub mod abi;
 pub mod error;
 pub mod models;
+pub mod pagination;
 pub mod semver;
-pub mod activity_feed_handlers;
+pub mod upgrade;
 
 pub use abi::*;
 pub use error::*;
 pub use models::*;
 pub use semver::*;
+pub use upgrade::*;

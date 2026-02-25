@@ -1,8 +1,8 @@
-use anyhow::{Context, Result, bail};
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use chrono::{DateTime, Utc};
+use anyhow::{bail, Context, Result};
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use chrono::Utc;
 use colored::Colorize;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use rand::rngs::OsRng;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -37,7 +37,11 @@ pub async fn sign_package(
 
     let signing_address = derive_stellar_address(&public_key_bytes);
 
-    println!("  {}: {}", "Signing Address".bold(), signing_address.bright_magenta());
+    println!(
+        "  {}: {}",
+        "Signing Address".bold(),
+        signing_address.bright_magenta()
+    );
     println!("  {}: {}", "Contract ID".bold(), contract_id.bright_black());
     println!("  {}: {}", "Version".bold(), version);
 
@@ -166,7 +170,11 @@ async fn verify_with_signature(
 
     if valid {
         println!("{}", "\n✓ Signature is VALID".green().bold());
-        println!("  {}: {}", "Signing Address".bold(), signing_address.bright_magenta());
+        println!(
+            "  {}: {}",
+            "Signing Address".bold(),
+            signing_address.bright_magenta()
+        );
         println!("  {}: {}", "Status".bold(), signature_status.green());
         if let Some(signed_at) = result["signed_at"].as_str() {
             println!("  {}: {}", "Signed At".bold(), signed_at);
@@ -187,7 +195,10 @@ async fn verify_from_registry(
     version: Option<&str>,
     package_hash: &str,
 ) -> Result<()> {
-    let mut url = format!("{}/api/signatures/lookup?contract_id={}", api_url, contract_id);
+    let mut url = format!(
+        "{}/api/signatures/lookup?contract_id={}",
+        api_url, contract_id
+    );
 
     if let Some(v) = version {
         url.push_str(&format!("&version={}", v));
@@ -210,7 +221,10 @@ async fn verify_from_registry(
         .context("No signatures found in response")?;
 
     if signatures.is_empty() {
-        println!("{}", "\n✗ No signatures found for this package".yellow().bold());
+        println!(
+            "{}",
+            "\n✗ No signatures found for this package".yellow().bold()
+        );
         return Ok(());
     }
 
@@ -229,13 +243,28 @@ async fn verify_from_registry(
             } else if status == "revoked" {
                 println!("{}", "\n✗ Signature has been REVOKED".red().bold());
             } else {
-                println!("{}", format!("\n⚠ Signature status: {}", status).yellow().bold());
+                println!(
+                    "{}",
+                    format!("\n⚠ Signature status: {}", status).yellow().bold()
+                );
             }
 
-            println!("  {}: {}", "Signing Address".bold(), signing_address.bright_magenta());
+            println!(
+                "  {}: {}",
+                "Signing Address".bold(),
+                signing_address.bright_magenta()
+            );
             println!("  {}: {}", "Status".bold(), status);
-            println!("  {}: {}", "Version".bold(), sig["version"].as_str().unwrap_or("?"));
-            println!("  {}: {}", "Signed At".bold(), sig["signed_at"].as_str().unwrap_or("?"));
+            println!(
+                "  {}: {}",
+                "Version".bold(),
+                sig["version"].as_str().unwrap_or("?")
+            );
+            println!(
+                "  {}: {}",
+                "Signed At".bold(),
+                sig["signed_at"].as_str().unwrap_or("?")
+            );
 
             if let Some(reason) = sig["revoked_reason"].as_str() {
                 println!("  {}: {}", "Revocation Reason".bold(), reason.red());
@@ -246,7 +275,9 @@ async fn verify_from_registry(
     if !found_valid {
         println!(
             "{}",
-            "\n✗ No matching signature found for this package hash".yellow().bold()
+            "\n✗ No matching signature found for this package hash"
+                .yellow()
+                .bold()
         );
     }
 
@@ -283,7 +314,11 @@ pub async fn revoke_signature(
     }
 
     println!("{}", "✓ Signature revoked successfully!".green().bold());
-    println!("  {}: {}", "Signature ID".bold(), signature_id.bright_black());
+    println!(
+        "  {}: {}",
+        "Signature ID".bold(),
+        signature_id.bright_black()
+    );
     println!("  {}: {}", "Revoked By".bold(), revoked_by.bright_magenta());
     println!("  {}: {}", "Reason".bold(), reason);
     println!();
@@ -317,7 +352,11 @@ pub async fn get_chain_of_custody(api_url: &str, contract_id: &str) -> Result<()
         return Ok(());
     }
 
-    println!("\n  {}: {}\n", "Contract ID".bold(), contract_id.bright_black());
+    println!(
+        "\n  {}: {}\n",
+        "Contract ID".bold(),
+        contract_id.bright_black()
+    );
 
     for entry in &entries {
         let action = entry["action"].as_str().unwrap_or("?");
@@ -411,7 +450,12 @@ pub async fn get_transparency_log(
     }
 
     let total = result["total"].as_i64().unwrap_or(entries.len() as i64);
-    println!("{}\nShowing {} of {} entries\n", "=".repeat(70).cyan(), entries.len(), total);
+    println!(
+        "{}\nShowing {} of {} entries\n",
+        "=".repeat(70).cyan(),
+        entries.len(),
+        total
+    );
 
     Ok(())
 }
@@ -483,7 +527,7 @@ fn decode_private_key(key: &str) -> Result<SigningKey> {
         .try_into()
         .map_err(|_| anyhow::anyhow!("Private key must be 32 bytes"))?;
 
-    SigningKey::from_bytes(&bytes).context("Invalid private key")
+    Ok(SigningKey::from_bytes(&bytes))
 }
 
 fn create_signing_message(hash: &str, contract_id: &str, version: &str) -> Vec<u8> {
@@ -491,8 +535,8 @@ fn create_signing_message(hash: &str, contract_id: &str, version: &str) -> Vec<u
 }
 
 fn derive_stellar_address(public_key_bytes: &[u8; 32]) -> String {
-    use sha2::{Digest as _, Sha256};
     use ripemd::Ripemd160;
+    use sha2::{Digest as _, Sha256};
 
     let sha256_hash = Sha256::digest(public_key_bytes);
     let ripemd_hash = Ripemd160::digest(&sha256_hash);
@@ -504,4 +548,66 @@ fn derive_stellar_address(public_key_bytes: &[u8; 32]) -> String {
     versioned.extend_from_slice(&checksum[..4]);
 
     bs58::encode(&versioned).into_string()
+}
+
+/// Verify a contract binary locally against an Ed25519 signature and public key.
+/// This does not contact the registry API and is suitable for offline verification.
+pub fn verify_contract_local(
+    wasm_path: &str,
+    contract_id: &str,
+    version: &str,
+    signature_b64: &str,
+    public_key_b64: &str,
+) -> Result<()> {
+    println!("\n{}", "Verifying contract binary signature...".bold().cyan());
+
+    let wasm_bytes = read_package_file(wasm_path)?;
+    let wasm_hash = compute_hash(&wasm_bytes);
+
+    println!("  {}: {}", "Contract Path".bold(), wasm_path.bright_black());
+    println!("  {}: {}", "Hash".bold(), wasm_hash.bright_black());
+    println!("  {}: {}", "Contract ID".bold(), contract_id);
+    println!("  {}: {}", "Version".bold(), version);
+
+    // Decode public key
+    let pk_bytes = BASE64
+        .decode(public_key_b64.trim())
+        .context("Invalid public key (expected base64-encoded Ed25519 key)")?;
+    let pk_array: [u8; 32] = pk_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Public key must decode to 32 bytes"))?;
+    let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&pk_array)
+        .map_err(|_| anyhow::anyhow!("Public key is not a valid Ed25519 key"))?;
+
+    // Decode signature
+    let sig_bytes = BASE64
+        .decode(signature_b64.trim())
+        .context("Invalid signature (expected base64-encoded Ed25519 signature)")?;
+    let sig_array: [u8; 64] = sig_bytes
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("Signature must decode to 64 bytes"))?;
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+
+    let message = create_signing_message(&wasm_hash, contract_id, version);
+
+    let start = std::time::Instant::now();
+    let ok = verifying_key.verify(&message, &signature).is_ok();
+    let elapsed = start.elapsed();
+
+    if ok {
+        println!("{}", "\n✓ Signature is VALID".green().bold());
+        println!(
+            "  {}: {:.3} ms",
+            "Verification time".bold(),
+            elapsed.as_secs_f64() * 1000.0
+        );
+    } else {
+        println!("{}", "\n✗ Signature is INVALID".red().bold());
+        anyhow::bail!("Ed25519 verification failed for this contract binary");
+    }
+
+    println!();
+    Ok(())
 }

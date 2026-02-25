@@ -130,6 +130,7 @@ async fn main() -> Result<()> {
     state.cache.clone().warm_up(pool.clone());
 
     let rate_limit_state = RateLimitState::from_env();
+    rate_limit_state.spawn_eviction_task(); 
 
     let allowed_origins = std::env::var("ALLOWED_ORIGINS").unwrap_or_else(|_| {
         "http://localhost:3000,https://soroban-registry.vercel.app".to_string()

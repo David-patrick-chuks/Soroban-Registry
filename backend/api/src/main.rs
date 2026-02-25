@@ -31,6 +31,8 @@ pub mod signing_handlers;
 mod state;
 mod type_safety;
 mod validation;
+pub mod security_log;
+// mod auth;
 // mod auth_handlers;
 // mod resource_handlers;
 // mod resource_tracking;
@@ -138,6 +140,13 @@ async fn main() -> Result<()> {
     // Spawn the background DB and cache monitoring task
     db_monitoring::spawn_db_monitoring_task(pool.clone(), state.cache.clone());
 
+    // Spawn the health monitor background task (Issue #333)
+    let hm_state = state.clone();
+    let hm_status = state.health_monitor_status.clone();
+    tokio::spawn(async move {
+        health_monitor::run_health_monitor(hm_state, hm_status).await;
+    });
+
     // Warm up the cache
     state.cache.clone().warm_up(pool.clone());
 
@@ -170,12 +179,15 @@ async fn main() -> Result<()> {
         .merge(routes::contract_routes())
         .merge(routes::publisher_routes())
         .merge(routes::health_routes())
+        .merge(routes::health_monitor_routes())
         .merge(routes::migration_routes())
         .merge(routes::compatibility_dashboard_routes())
         .merge(release_notes_routes::release_notes_routes())
         .nest("/api", activity_feed_routes::routes())
         .fallback(handlers::route_not_found)
         .layer(middleware::from_fn(request_tracing::tracing_middleware))
+        .layer(middleware::from_fn(validation::payload_size::payload_size_validation_middleware))
+        .layer(middleware::from_fn(validation::enhanced_extractors::validation_failure_tracking_middleware))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             track_in_flight_middleware,

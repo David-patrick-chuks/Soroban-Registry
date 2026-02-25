@@ -4,8 +4,16 @@ use axum::{
 };
 
 use crate::{
-    breaking_changes, compatibility_testing_handlers, custom_metrics_handlers,
-    deprecation_handlers, handlers, metrics_handler, migration_handlers, state::AppState,
+    batch_verify_handlers,
+    breaking_changes,
+    compatibility_testing_handlers,
+    custom_metrics_handlers,
+    deprecation_handlers,
+    handlers,
+    metrics_handler,
+    migration_handlers,
+    activity_feed_handlers,
+    state::AppState,
 };
 
 pub fn observability_routes() -> Router<AppState> {
@@ -14,12 +22,8 @@ pub fn observability_routes() -> Router<AppState> {
 
 pub fn contract_routes() -> Router<AppState> {
     Router::new()
-        .route("/api/contracts", get(handlers::list_contracts))
-        .route("/api/contracts", post(handlers::publish_contract))
-        .route(
-            "/api/contracts/trending",
-            get(handlers::get_trending_contracts),
-        )
+        .route("/api/contracts", get(handlers::list_contracts).post(handlers::publish_contract))
+        .route("/api/contracts/trending", get(handlers::get_trending_contracts))
         .route("/api/contracts/graph", get(handlers::get_contract_graph))
         .route("/api/contracts/:id", get(handlers::get_contract))
         .route(
@@ -55,7 +59,6 @@ pub fn contract_routes() -> Router<AppState> {
             "/api/contracts/:id/changelog",
             get(handlers::get_contract_changelog),
         )
-        // Compatibility alias (spec asks for /contracts/{id}/changelog)
         .route(
             "/contracts/:id/changelog",
             get(handlers::get_contract_changelog),
@@ -63,10 +66,6 @@ pub fn contract_routes() -> Router<AppState> {
         .route(
             "/api/contracts/breaking-changes",
             get(breaking_changes::get_breaking_changes),
-        )
-        .route(
-            "/api/contracts/:id/versions",
-            get(handlers::get_contract_versions),
         )
         .route(
             "/api/contracts/:id/interactions",
@@ -143,6 +142,10 @@ pub fn contract_routes() -> Router<AppState> {
         .route("/api/contracts/verify", post(handlers::verify_contract))
         .route("/api/admin/audit-logs", get(handlers::get_all_audit_logs))
         .route(
+            "/api/contracts/batch-verify",
+            post(batch_verify_handlers::batch_verify_contracts),
+        )
+        .route(
             "/api/contracts/:id/performance",
             get(handlers::get_contract_performance),
         )
@@ -159,7 +162,6 @@ pub fn contract_routes() -> Router<AppState> {
             "/api/contracts/:id/metrics/catalog",
             get(custom_metrics_handlers::get_metric_catalog),
         )
-        // SDK / Wasm / Network Compatibility Testing Matrix (Issue #261)
         .route(
             "/api/contracts/:id/compatibility-matrix",
             get(compatibility_testing_handlers::get_compatibility_matrix),
@@ -185,9 +187,6 @@ pub fn contract_routes() -> Router<AppState> {
             get(handlers::get_deployment_status),
         )
         .route("/api/deployments/green", post(handlers::deploy_green))
-    // TODO: backup_routes, notification_routes, and post_incident_routes
-    // are available in the api library crate but need architectural refactoring
-    // to be integrated with the main AppState
 }
 
 pub fn publisher_routes() -> Router<AppState> {
@@ -204,11 +203,21 @@ pub fn health_routes() -> Router<AppState> {
     Router::new()
         .route("/health", get(handlers::health_check))
         .route("/api/stats", get(handlers::get_stats))
+        .route(
+            "/api/activity-feed",
+            get(activity_feed_handlers::get_activity_feed),
+        )
+}
+
+pub fn health_monitor_routes() -> Router<AppState> {
+    Router::new().route(
+        "/api/health-monitor/status",
+        get(crate::health_monitor::get_health_monitor_status),
+    )
 }
 
 pub fn migration_routes() -> Router<AppState> {
     Router::new()
-        // Database Migration Versioning and Rollback (Issue #252)
         .route(
             "/api/admin/migrations/status",
             get(migration_handlers::get_migration_status),
@@ -245,9 +254,11 @@ pub fn compatibility_dashboard_routes() -> Router<AppState> {
 pub fn canary_routes() -> Router<AppState> {
     Router::new()
 }
+
 pub fn ab_test_routes() -> Router<AppState> {
     Router::new()
 }
+
 pub fn performance_routes() -> Router<AppState> {
     Router::new()
 }

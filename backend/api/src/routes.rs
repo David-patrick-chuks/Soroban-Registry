@@ -4,6 +4,13 @@ use axum::{
 };
 
 use crate::{
+    batch_verify_handlers,
+    handlers,
+    metrics_handler,
+    breaking_changes,
+    deprecation_handlers,
+    custom_metrics_handlers,
+    state::AppState,
     breaking_changes, compatibility_testing_handlers, custom_metrics_handlers,
     deprecation_handlers, handlers, metrics_handler, migration_handlers, state::AppState,
 };
@@ -14,6 +21,8 @@ pub fn observability_routes() -> Router<AppState> {
 
 pub fn contract_routes() -> Router<AppState> {
     Router::new()
+        .route("/api/contracts", get(handlers::list_contracts).post(handlers::publish_contract))
+        .route("/api/contracts/trending", get(handlers::get_trending_contracts))
         .route("/api/contracts", get(handlers::list_contracts))
         .route("/api/contracts", post(handlers::publish_contract))
         .route(
@@ -39,6 +48,10 @@ pub fn contract_routes() -> Router<AppState> {
             get(handlers::get_contract_audit_log),
         )
         .route("/api/contracts/:id/abi", get(handlers::get_contract_abi))
+        .route("/api/contracts/:id/openapi.yaml", get(handlers::get_contract_openapi_yaml))
+        .route("/api/contracts/:id/openapi.json", get(handlers::get_contract_openapi_json))
+        .route("/api/contracts/:id/versions", get(handlers::get_contract_versions).post(handlers::create_contract_version))
+        .route("/api/contracts/breaking-changes", get(breaking_changes::get_breaking_changes))
         .route(
             "/api/contracts/:id/openapi.yaml",
             get(handlers::get_contract_openapi_yaml),
@@ -118,6 +131,10 @@ pub fn contract_routes() -> Router<AppState> {
         .route("/api/contracts/:id/impact", get(handlers::get_impact_analysis))
         .route("/api/contracts/verify", post(handlers::verify_contract))
         .route("/api/admin/audit-logs", get(handlers::get_all_audit_logs))
+        .route(
+            "/api/contracts/batch-verify",
+            post(batch_verify_handlers::batch_verify_contracts),
+        )
         .route(
             "/api/contracts/:id/performance",
             get(handlers::get_contract_performance),
